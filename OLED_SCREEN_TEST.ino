@@ -18,6 +18,8 @@
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SH110X.h>
+#include <LittleFS.h>
+#include <ArduinoJson.h>
 
 #define SCREEN_WIDTH 64  // OLED display width, in pixels
 #define SCREEN_HEIGHT 128 // OLED display height, in pixels
@@ -72,11 +74,51 @@ void testdrawstyles(void);
 void testdrawbitmap(void);
 void testanimate(const uint8_t *bitmap, uint8_t w, uint8_t h);
 
+// File handling
+const char* filename = "/data.json";
+
+void saveCounter(int value) {
+  // Create a JSON document
+  JsonDocument doc;
+  doc["counter"] = value;
+
+  File file = LittleFS.open(filename, "w");
+  if (!file) {
+    Serial.println("Failed to open file for writing");
+    return;
+  }
+  serializeJson(doc, file);
+  file.close();
+  Serial.print("Saved counter = ");
+  Serial.println(value);
+}
+
+int loadCounter() {
+  if (!LittleFS.exists(filename)) {
+    Serial.println("No save file found, starting fresh.");
+    return 0;
+  }
+
+  File file = LittleFS.open(filename, "r");
+  if (!file) {
+    Serial.println("Failed to open file for reading");
+    return 0;
+  }
+
+  JsonDocument doc;
+  DeserializationError error = deserializeJson(doc, file);
+  file.close();
+
+  if (error) {
+    Serial.println("Failed to parse JSON, starting fresh.");
+    return 0;
+  }
+
+  return doc["counter"] | 0; // default to 0
+}
 
 void setup()   {
-
-  Serial.begin(9600);
-
+  Serial.begin(115200);
 
   Wire.setSDA(20);
   Wire.setSCL(21);
@@ -85,6 +127,9 @@ void setup()   {
   pinMode(BUTTON_PIN2, INPUT_PULLDOWN); // button to positive
  
   delay(250); // wait for the OLED to power up
+
+  LittleFS.begin();
+  Serial.println("MTG Counter Initialized.");
 
   // Show image buffer on the display hardware.
   // Since the buffer is intialized with an Adafruit splashscreen
@@ -108,33 +153,9 @@ void setup()   {
   delay(2000);
   display.clearDisplay();
 
-  drawNumber(0);
-
-  // testdrawline();      // Draw many lines
-
-  // testdrawrect();      // Draw rectangles (outlines)
-
-  // testfillrect();      // Draw rectangles (filled)
-
-  // testdrawcircle();    // Draw circles (outlines)
-
-  // testfillcircle();    // Draw circles (filled)
-
-  // testdrawroundrect(); // Draw rounded rectangles (outlines)
-
-  // testfillroundrect(); // Draw rounded rectangles (filled)
-
-  // testdrawtriangle();  // Draw triangles (outlines)
-
-  // testfilltriangle();  // Draw triangles (filled)
-
-  // testdrawchar();      // Draw characters of the default font
-
-  // testdrawstyles();    // Draw 'stylized' characters
-
-  // testdrawbitmap();    // Draw a small bitmap image
-
-  // testanimate(logo_bmp, LOGO_WIDTH, LOGO_HEIGHT); // Animate bitmaps
+  // Load saved counter from flash and display the retrieved number
+  counter = loadCounter();
+  drawNumber(counter);
 }
 
 void mutateNumber(bool isPositive) {
@@ -149,7 +170,8 @@ void mutateNumber(bool isPositive) {
     } else if (counter > 99) {
       counter = 99;
     }
-    drawNumber(counter);
+    drawNumber(counter); // update the screen with the new number
+    // saveCounter(counter);  // write to flash every change
     delay(40); // debounce delay
 }
 
