@@ -168,19 +168,12 @@ void setup()   {
 }
 
 void mutateNumber(bool isPositive, int step) {
-    if (isPositive) {
+    if (isPositive && counter < 99) {
       counter += step;
       netChange += step;
-    } else {
+    } else if (!isPositive && counter > 0) {
       counter -= step;
       netChange -= step;
-
-    }
-    // Clamp the values
-    if (counter < 0) {
-      counter = 0;
-    } else if (counter > 99) {
-      counter = 99;
     }
 
     // Keep time since last mutation.
