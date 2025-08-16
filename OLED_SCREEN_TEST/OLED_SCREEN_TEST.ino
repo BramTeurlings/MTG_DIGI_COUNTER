@@ -53,11 +53,18 @@ static const unsigned char PROGMEM logo_bmp[] =
   0b01110000, 0b01110000,
   0b00000000, 0b00110000 };
 
+// Defining pins for buttons
 #define BUTTON_PIN1 1  // GP1
 #define BUTTON_PIN2 2  // GP2
+
+// The value where we store the main number being displayed
 int counter = 0;
+
+// Button state tracking
 bool lastButtonState1 = LOW; // default LOW if using pull-down
 bool lastButtonState2 = LOW; // default LOW if using pull-down
+
+// Holds the timestamp for the current press down action
 unsigned long pressStart = 0;
 
 // Hold settings
@@ -69,6 +76,12 @@ const unsigned long minInterval = 200;    // fastest speed
 // For tracking repeat timing
 unsigned long lastRepeatTime = 0;
 unsigned long currentInterval = initialRepeat;
+
+// Net change tracking
+int netChange = 0;
+unsigned long lastActionTime = 0;
+const unsigned long changeDisplayDuration = 2000;
+bool deltaVisible = false;
 
 // File handling
 const char* filename = "/data.json";
@@ -151,14 +164,17 @@ void setup()   {
 
   // Load saved counter from flash and display the retrieved number
   counter = loadCounter();
-  drawNumber(counter);
+  renderScreen();
 }
 
 void mutateNumber(bool isPositive, int step) {
     if (isPositive) {
       counter += step;
+      netChange += step;
     } else {
       counter -= step;
+      netChange -= step;
+
     }
     // Clamp the values
     if (counter < 0) {
@@ -166,7 +182,12 @@ void mutateNumber(bool isPositive, int step) {
     } else if (counter > 99) {
       counter = 99;
     }
-    drawNumber(counter); // update the screen with the new number
+
+    // Keep time since last mutation.
+    lastActionTime = millis();
+    deltaVisible = true;
+
+    renderScreen(); // update the screen with the new number
     // saveCounter(counter);  // write to flash every change
     delay(40); // debounce delay
 }
@@ -216,15 +237,35 @@ void handleButton(int pin, bool &lastState, unsigned long &pressStart,
 void loop() {
   handleButton(BUTTON_PIN1, lastButtonState1, pressStart, lastRepeatTime, currentInterval, true);
   handleButton(BUTTON_PIN2, lastButtonState2, pressStart, lastRepeatTime, currentInterval, false);
+
+    // Handle delta timeout
+  if (deltaVisible && millis() - lastActionTime > changeDisplayDuration) {
+    netChange = 0;
+    deltaVisible = false;
+    renderScreen();
+  }
+
   delay(10); // debounce delay
 }
 
-void drawNumber(int num) {
+void renderScreen() {
   display.clearDisplay();
+
+  // Big number
   display.setTextSize(5);
   display.setTextColor(SH110X_WHITE);
   display.setCursor(0, 0);
-  display.cp437(true);
-  display.print(num); // no quotes, so it's a number
+  display.print(counter);
+
+  // Delta (if active)
+  if (deltaVisible && netChange != 0) {
+    display.setTextSize(2);
+    display.setCursor(0, 60); // adjust Y position
+    if (netChange > 0) {
+      display.print("+");
+    }
+    display.print(netChange);
+  }
+
   display.display();
 }
