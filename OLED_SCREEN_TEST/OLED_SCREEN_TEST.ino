@@ -149,6 +149,7 @@ void setup()   {
  
   display.display();
   delay(100);
+  display.setRotation(1);   // rotate so it’s 128 wide × 64 tall
 
   // Clear the buffer.
   display.clearDisplay();
@@ -168,21 +169,30 @@ void setup()   {
 }
 
 void mutateNumber(bool isPositive, int step) {
-    if (isPositive && counter < 99) {
-      counter += step;
-      netChange += step;
-    } else if (!isPositive && counter > 0) {
-      counter -= step;
-      netChange -= step;
-    }
+  int before = counter;
 
-    // Keep time since last mutation.
-    lastActionTime = millis();
-    deltaVisible = true;
+  // Apply step
+  if (isPositive) {
+    counter += step;
+  } else {
+    counter -= step;
+  }
 
-    renderScreen(); // update the screen with the new number
-    // saveCounter(counter);  // write to flash every change
-    delay(40); // debounce delay
+  // Clamp
+  if (counter > 99) counter = 99;
+  if (counter < 0)  counter = 0;
+
+  // Actual change is the difference between before and after
+  int actualDelta = counter - before;
+  netChange += actualDelta;
+
+  // Keep time since last mutation.
+  lastActionTime = millis();
+  deltaVisible = true;
+
+  renderScreen(); // update the screen with the new number
+  // saveCounter(counter);  // write to flash every change
+  delay(40); // debounce delay
 }
 
 void handleButton(int pin, bool &lastState, unsigned long &pressStart,
@@ -253,7 +263,11 @@ void renderScreen() {
   // Delta (if active)
   if (deltaVisible && netChange != 0) {
     display.setTextSize(2);
-    display.setCursor(0, 60); // adjust Y position
+    if (counter < 10) {
+      display.setCursor(30, 0);
+    } else {
+      display.setCursor(60, 0); // adjust Y position
+    }
     if (netChange > 0) {
       display.print("+");
     }
