@@ -56,13 +56,12 @@ static const unsigned char PROGMEM logo_bmp[] =
 // Defining pins for buttons
 #define BUTTON_PIN1 1  // GP1
 #define BUTTON_PIN2 2  // GP2
-
-// The value where we store the main number being displayed
-int counter = 0;
+#define BUTTON_PIN3 3  // GP3
 
 // Button state tracking
 bool lastButtonState1 = LOW; // default LOW if using pull-down
 bool lastButtonState2 = LOW; // default LOW if using pull-down
+bool lastButtonState3 = LOW; // default LOW if using pull-down
 
 // Holds the timestamp for the current press down action
 unsigned long pressStart = 0;
@@ -83,13 +82,25 @@ unsigned long lastActionTime = 0;
 const unsigned long changeDisplayDuration = 2000;
 bool deltaVisible = false;
 
+// Page system
+const int MAX_PAGES = 4;
+// The value where we store the main number being displayed
+int counters[MAX_PAGES] = {0, 0, 0, 0};
+int currentPage = 0;
+
 // File handling
 const char* filename = "/data.json";
 
-void saveCounter(int value) {
+void saveState() {
   // Create a JSON document
   JsonDocument doc;
-  doc["counter"] = value;
+  doc["currentPage"] = currentPage;
+
+  JsonArray arr = doc["pages"].to<JsonArray>();
+  arr.clear(); // make sure it’s empty before filling
+  for (int i = 0; i < MAX_PAGES; i++) {
+    arr.add(counters[i]);
+  }
 
   File file = LittleFS.open(filename, "w");
   if (!file) {
@@ -98,20 +109,19 @@ void saveCounter(int value) {
   }
   serializeJson(doc, file);
   file.close();
-  Serial.print("Saved counter = ");
-  Serial.println(value);
+  Serial.println("State saved");
 }
 
-int loadCounter() {
+void loadState() {
   if (!LittleFS.exists(filename)) {
     Serial.println("No save file found, starting fresh.");
-    return 0;
+    return;
   }
 
   File file = LittleFS.open(filename, "r");
   if (!file) {
     Serial.println("Failed to open file for reading");
-    return 0;
+    return;
   }
 
   JsonDocument doc;
@@ -120,10 +130,16 @@ int loadCounter() {
 
   if (error) {
     Serial.println("Failed to parse JSON, starting fresh.");
-    return 0;
+    return;
   }
 
-  return doc["counter"] | 0; // default to 0
+  currentPage = doc["currentPage"] | 0;
+  JsonArray arr = doc["pages"];
+  int i = 0;
+  for (int val : arr) {
+    if (i < MAX_PAGES) counters[i] = val;
+    i++;
+  }
 }
 
 void setup()   {
@@ -134,6 +150,8 @@ void setup()   {
   
   pinMode(BUTTON_PIN1, INPUT_PULLDOWN); // button to positive
   pinMode(BUTTON_PIN2, INPUT_PULLDOWN); // button to positive
+  pinMode(BUTTON_PIN3, INPUT_PULLDOWN); // button to positive
+
  
   delay(250); // wait for the OLED to power up
 
@@ -149,7 +167,7 @@ void setup()   {
  
   display.display();
   delay(100);
-  display.setRotation(1);   // rotate so it’s 128 wide × 64 tall
+  display.setRotation(3);   // rotate so it’s 128 wide × 64 tall
 
   // Clear the buffer.
   display.clearDisplay();
@@ -163,27 +181,27 @@ void setup()   {
   delay(10);
   display.clearDisplay();
 
-  // Load saved counter from flash and display the retrieved number
-  counter = loadCounter();
+  // Load saved state from flash and display the retrieved number
+  loadState();
   renderScreen();
 }
 
 void mutateNumber(bool isPositive, int step) {
-  int before = counter;
+  int before = counters[currentPage];
 
   // Apply step
   if (isPositive) {
-    counter += step;
+    counters[currentPage] += step;
   } else {
-    counter -= step;
+    counters[currentPage] -= step;
   }
 
   // Clamp
-  if (counter > 99) counter = 99;
-  if (counter < 0)  counter = 0;
+  if (counters[currentPage] > 99) counters[currentPage] = 99;
+  if (counters[currentPage] < 0)  counters[currentPage] = 0;
 
   // Actual change is the difference between before and after
-  int actualDelta = counter - before;
+  int actualDelta = counters[currentPage] - before;
   netChange += actualDelta;
 
   // Keep time since last mutation.
@@ -191,8 +209,21 @@ void mutateNumber(bool isPositive, int step) {
   deltaVisible = true;
 
   renderScreen(); // update the screen with the new number
-  // saveCounter(counter);  // write to flash every change
+  // saveState();  // write to flash every change
   delay(40); // debounce delay
+}
+
+void switchPage(int direction) {
+  currentPage += direction;
+  if (currentPage < 0) currentPage = MAX_PAGES - 1;
+  if (currentPage >= MAX_PAGES) currentPage = 0;
+
+  netChange = 0;
+  deltaVisible = false;
+  lastActionTime = millis();
+
+  renderScreen();
+  // saveState(); Todo: Uncomment all saveState() calls later
 }
 
 void handleButton(int pin, bool &lastState, unsigned long &pressStart,
@@ -211,6 +242,12 @@ void handleButton(int pin, bool &lastState, unsigned long &pressStart,
 
   if (lastState == HIGH && state == LOW) {
     // Button released
+    // Simply call switchPage if button 3 is pressed for now
+    if (pin == 3) {
+      switchPage(1);
+      lastState = state;
+      return;
+    }
     if (now - pressStart < holdThreshold) {
       // Short press → ±1
       mutateNumber(isPositive, 1);
@@ -240,6 +277,7 @@ void handleButton(int pin, bool &lastState, unsigned long &pressStart,
 void loop() {
   handleButton(BUTTON_PIN1, lastButtonState1, pressStart, lastRepeatTime, currentInterval, true);
   handleButton(BUTTON_PIN2, lastButtonState2, pressStart, lastRepeatTime, currentInterval, false);
+  handleButton(BUTTON_PIN3, lastButtonState3, pressStart, lastRepeatTime, currentInterval, true);
 
     // Handle delta timeout
   if (deltaVisible && millis() - lastActionTime > changeDisplayDuration) {
@@ -257,21 +295,33 @@ void renderScreen() {
   // Big number
   display.setTextSize(5);
   display.setTextColor(SH110X_WHITE);
-  display.setCursor(0, 0);
-  display.print(counter);
+  display.setCursor(20, 0);
+  display.print(counters[currentPage]);
 
   // Delta (if active)
   if (deltaVisible && netChange != 0) {
     display.setTextSize(2);
-    if (counter < 10) {
-      display.setCursor(30, 0);
+    if (counters[currentPage] < 10) {
+      display.setCursor(50, 0);
     } else {
-      display.setCursor(60, 0); // adjust Y position
+      display.setCursor(80, 0); // adjust Y position
     }
     if (netChange > 0) {
       display.print("+");
     }
     display.print(netChange);
+  }
+
+  // Page indicator
+  int boxSize = 6;
+  int spacing = 10;
+  for (int i = 0; i < MAX_PAGES; i++) {
+    int y = i * spacing;
+    if (i == currentPage) {
+      display.fillRect(0, y, boxSize, boxSize, SH110X_WHITE);
+    } else {
+      display.drawRect(0, y, boxSize, boxSize, SH110X_WHITE);
+    }
   }
 
   display.display();
