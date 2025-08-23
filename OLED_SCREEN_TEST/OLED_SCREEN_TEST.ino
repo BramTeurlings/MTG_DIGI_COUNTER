@@ -82,10 +82,14 @@ unsigned long lastActionTime = 0;
 const unsigned long changeDisplayDuration = 2000;
 bool deltaVisible = false;
 
+// Contrast modes
+uint8_t contrastLevels[4] = {0, 42, 85, 127}; // approx 0%, 33%, 66%, 100%
+int currentContrast = 3; // start at 100%
+
 // Page system
 const int MAX_PAGES = 4;
 // The value where we store the main number being displayed
-int counters[MAX_PAGES] = {0, 0, 0, 0};
+int counters[MAX_PAGES - 1] = {0, 0, 0};
 int currentPage = 0;
 
 // File handling
@@ -95,10 +99,11 @@ void saveState() {
   // Create a JSON document
   JsonDocument doc;
   doc["currentPage"] = currentPage;
+  doc["contrast"] = currentContrast;
 
   JsonArray arr = doc["pages"].to<JsonArray>();
   arr.clear(); // make sure it’s empty before filling
-  for (int i = 0; i < MAX_PAGES; i++) {
+  for (int i = 0; i < MAX_PAGES - 1; i++) {
     arr.add(counters[i]);
   }
 
@@ -134,10 +139,12 @@ void loadState() {
   }
 
   currentPage = doc["currentPage"] | 0;
+  currentContrast = doc["contrast"] | 3;
+
   JsonArray arr = doc["pages"];
   int i = 0;
   for (int val : arr) {
-    if (i < MAX_PAGES) counters[i] = val;
+    if (i < MAX_PAGES - 1) counters[i] = val;
     i++;
   }
 }
@@ -226,6 +233,24 @@ void switchPage(int direction) {
   // saveState(); Todo: Uncomment all saveState() calls later
 }
 
+void settingsAction(bool isLeft) {
+  if (isLeft) {
+    // Cycle contrast
+    currentContrast = (currentContrast + 1) % 4;
+    display.setContrast(contrastLevels[currentContrast]);
+    Serial.print("Contrast set to ");
+    Serial.println(contrastLevels[currentContrast]);
+    saveState();
+    renderScreen();
+  } else {
+    // Display a blank image on the display
+    display.clearDisplay();
+    display.display();
+    // Todo: put MCU into sleep here if desired
+    Serial.println("Todo: Powering off...");
+  }
+}
+
 void handleButton(int pin, bool &lastState, unsigned long &pressStart,
                   unsigned long &lastRepeat, unsigned long &currentInterval,
                   bool isPositive) {
@@ -248,14 +273,19 @@ void handleButton(int pin, bool &lastState, unsigned long &pressStart,
       lastState = state;
       return;
     }
-    if (now - pressStart < holdThreshold) {
-      // Short press → ±1
-      mutateNumber(isPositive, 1);
+    if (currentPage == MAX_PAGES - 1) {
+      // On settings page → short press activates setting
+      settingsAction(isPositive); // left = contrast, right = power
+    } else {
+      if (now - pressStart < holdThreshold) {
+        // Short press → ±1
+        mutateNumber(isPositive, 1);
+      }
     }
   }
 
   // Long press handling
-  if (state == HIGH) {
+  if (pin != 3 && currentPage < MAX_PAGES - 1 && state == HIGH) {
     if (now - pressStart >= holdThreshold) {
       if (now - lastRepeat >= currentInterval) {
         mutateNumber(isPositive, 10);
@@ -292,24 +322,39 @@ void loop() {
 void renderScreen() {
   display.clearDisplay();
 
-  // Big number
-  display.setTextSize(5);
-  display.setTextColor(SH110X_WHITE);
-  display.setCursor(20, 0);
-  display.print(counters[currentPage]);
+  if (currentPage < MAX_PAGES - 1) {
+    // Big number
+    display.setTextSize(5);
+    display.setTextColor(SH110X_WHITE);
+    display.setCursor(20, 0);
+    display.print(counters[currentPage]);
 
-  // Delta (if active)
-  if (deltaVisible && netChange != 0) {
+    // Delta (if active)
+    if (deltaVisible && netChange != 0) {
+      display.setTextSize(2);
+      if (counters[currentPage] < 10) {
+        display.setCursor(50, 0);
+      } else {
+        display.setCursor(80, 0); // adjust Y position
+      }
+      if (netChange > 0) {
+        display.print("+");
+      }
+      display.print(netChange);
+    }
+  } else {
+    // Settings page
+    // Left: contrast icon
+    display.drawRect(20, 10, 40, 40, SH110X_WHITE);
+    display.setCursor(28, 25);
     display.setTextSize(2);
-    if (counters[currentPage] < 10) {
-      display.setCursor(50, 0);
-    } else {
-      display.setCursor(80, 0); // adjust Y position
-    }
-    if (netChange > 0) {
-      display.print("+");
-    }
-    display.print(netChange);
+    display.print("C");
+
+    // Right: power icon
+    display.drawRect(80, 10, 40, 40, SH110X_WHITE);
+    display.setCursor(92, 25);
+    display.setTextSize(2);
+    display.print("P");
   }
 
   // Page indicator
