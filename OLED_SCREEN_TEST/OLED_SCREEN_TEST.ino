@@ -87,9 +87,9 @@ uint8_t contrastLevels[4] = {0, 42, 85, 127}; // approx 0%, 33%, 66%, 100%
 int currentContrast = 3; // start at 100%
 
 // Page system
-const int MAX_PAGES = 4;
+const int NUM_PAGES = 4;
 // The value where we store the main number being displayed
-int counters[MAX_PAGES - 1] = {0, 0, 0};
+int counters[NUM_PAGES - 1] = {0, 0, 0};
 int currentPage = 0;
 
 // File handling
@@ -103,7 +103,7 @@ void saveState() {
 
   JsonArray arr = doc["pages"].to<JsonArray>();
   arr.clear(); // make sure it’s empty before filling
-  for (int i = 0; i < MAX_PAGES - 1; i++) {
+  for (int i = 0; i < NUM_PAGES - 1; i++) {
     arr.add(counters[i]);
   }
 
@@ -144,7 +144,7 @@ void loadState() {
   JsonArray arr = doc["pages"];
   int i = 0;
   for (int val : arr) {
-    if (i < MAX_PAGES - 1) counters[i] = val;
+    if (i < NUM_PAGES - 1) counters[i] = val;
     i++;
   }
 }
@@ -217,13 +217,13 @@ void mutateNumber(bool isPositive, int step) {
 
   renderScreen(); // update the screen with the new number
   // saveState();  // write to flash every change
-  delay(40); // debounce delay
+  delay(10); // debounce delay
 }
 
 void switchPage(int direction) {
   currentPage += direction;
-  if (currentPage < 0) currentPage = MAX_PAGES - 1;
-  if (currentPage >= MAX_PAGES) currentPage = 0;
+  if (currentPage < 0) currentPage = NUM_PAGES - 1;
+  if (currentPage >= NUM_PAGES) currentPage = 0;
 
   netChange = 0;
   deltaVisible = false;
@@ -273,7 +273,7 @@ void handleButton(int pin, bool &lastState, unsigned long &pressStart,
       lastState = state;
       return;
     }
-    if (currentPage == MAX_PAGES - 1) {
+    if (currentPage == NUM_PAGES - 1) {
       // On settings page → short press activates setting
       settingsAction(isPositive); // left = contrast, right = power
     } else {
@@ -285,7 +285,7 @@ void handleButton(int pin, bool &lastState, unsigned long &pressStart,
   }
 
   // Long press handling
-  if (pin != 3 && currentPage < MAX_PAGES - 1 && state == HIGH) {
+  if (pin != 3 && currentPage < NUM_PAGES - 1 && state == HIGH) {
     if (now - pressStart >= holdThreshold) {
       if (now - lastRepeat >= currentInterval) {
         mutateNumber(isPositive, 10);
@@ -319,30 +319,61 @@ void loop() {
   delay(10); // debounce delay
 }
 
+String formatAsCounter(int x, int y) {
+  String result = "";
+
+  // Add sign and value for x
+  if (x >= 0) {
+    result += "+";
+  } else {
+    result += "-";
+  }
+  result += String(x);
+
+  result += "|";
+
+  // Add sign and value for y
+  if (y >= 0) {
+    result += "+";
+  } else {
+    result += "-";
+  }
+  result += String(y);
+
+  return result;
+}
+
 void renderScreen() {
   display.clearDisplay();
 
-  if (currentPage < MAX_PAGES - 1) {
+  if (currentPage < NUM_PAGES - 1) {
     // Big number
     display.setTextSize(5);
     display.setTextColor(SH110X_WHITE);
-    display.setCursor(20, 0);
-    display.print(counters[currentPage]);
+    display.setCursor(0, 0);
+    if (currentPage == NUM_PAGES - 2) {
+      display.setTextSize(3);
+      display.print(formatAsCounter(counters[currentPage], counters[currentPage]));
+      display.setTextSize(5);
+    } else {
+      display.print(counters[currentPage]);
+    }
 
     // Delta (if active)
     if (deltaVisible && netChange != 0) {
       display.setTextSize(2);
       if (counters[currentPage] < 10) {
-        display.setCursor(50, 0);
+        display.setCursor(0, 50);
       } else {
-        display.setCursor(80, 0); // adjust Y position
+        display.setCursor(0, 50); // adjust Y position
       }
       if (netChange > 0) {
         display.print("+");
       }
       display.print(netChange);
     }
-  } else {
+  } 
+  else {
     // Settings page
     // Left: contrast icon
     display.drawRect(20, 10, 40, 40, SH110X_WHITE);
@@ -360,12 +391,13 @@ void renderScreen() {
   // Page indicator
   int boxSize = 6;
   int spacing = 10;
-  for (int i = 0; i < MAX_PAGES; i++) {
-    int y = i * spacing;
+  int initialCursor = 120;
+  for (int i = 0; i < NUM_PAGES; i++) {
+    int x = initialCursor - i * spacing;
     if (i == currentPage) {
-      display.fillRect(0, y, boxSize, boxSize, SH110X_WHITE);
+      display.fillRect(x, 55, boxSize, boxSize, SH110X_WHITE);
     } else {
-      display.drawRect(0, y, boxSize, boxSize, SH110X_WHITE);
+      display.drawRect(x, 55, boxSize, boxSize, SH110X_WHITE);
     }
   }
 
