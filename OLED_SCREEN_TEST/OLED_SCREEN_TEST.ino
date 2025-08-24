@@ -53,6 +53,20 @@ static const unsigned char PROGMEM logo_bmp[] =
   0b01110000, 0b01110000,
   0b00000000, 0b00110000 };
 
+// Icon storage
+#define ICON_SIZE 16
+
+struct Icon {
+  const unsigned char *bitmap;
+  uint8_t width;
+  uint8_t height;
+};
+
+static const Icon icons[] = {
+  { logo_bmp, LOGO_WIDTH, LOGO_HEIGHT },
+  // Add more icons here later...
+};
+
 // Defining pins for buttons
 #define BUTTON_PIN1 1  // GP1
 #define BUTTON_PIN2 2  // GP2
@@ -88,8 +102,8 @@ int currentContrast = 3; // start at 100%
 
 // Page system
 const int NUM_PAGES = 4;
-// The value where we store the main number being displayed
-int counters[NUM_PAGES - 1] = {0, 0, 0};
+int counters[NUM_PAGES - 1] = {0, 0, 0}; // The value where we store the main number being displayed
+int selectedIcons[NUM_PAGES - 1] = {0, 0, 0}; // Index of icon per page
 int currentPage = 0;
 
 // File handling
@@ -104,7 +118,9 @@ void saveState() {
   JsonArray arr = doc["pages"].to<JsonArray>();
   arr.clear(); // make sure it’s empty before filling
   for (int i = 0; i < NUM_PAGES - 1; i++) {
-    arr.add(counters[i]);
+    JsonObject page = arr.add<JsonObject>();
+    page["value"] = counters[i];
+    page["icon"] = selectedIcons[i];
   }
 
   File file = LittleFS.open(filename, "w");
@@ -143,8 +159,11 @@ void loadState() {
 
   JsonArray arr = doc["pages"];
   int i = 0;
-  for (int val : arr) {
-    if (i < NUM_PAGES - 1) counters[i] = val;
+  for (JsonObject page : arr) {
+    if (i < NUM_PAGES - 1) {
+      counters[i] = page["value"] | 0;
+      selectedIcons[i] = page["icon"] | 0;
+    }
     i++;
   }
 }
@@ -356,6 +375,22 @@ void renderScreen() {
       display.print(formatAsCounter(counters[currentPage], counters[currentPage]));
       display.setTextSize(5);
     } else {
+      // Get text bounds
+      int16_t x1, y1;
+      uint16_t w, h;
+      String textToDraw = String(counters[currentPage]);
+      display.getTextBounds(textToDraw, 0, 0, &x1, &y1, &w, &h);
+      // Draw icon on left
+      int iconX = 0;
+      int iconY = (h / 2) - (LOGO_HEIGHT / 2) - 3; // Arbitrary 3 pixel offset (why???)
+      display.drawBitmap(iconX, iconY,
+                       icons[selectedIcons[currentPage]].bitmap,
+                       icons[selectedIcons[currentPage]].width,
+                       icons[selectedIcons[currentPage]].height,
+                       SH110X_WHITE);
+
+      // Draw number on the right
+      display.setCursor(30, 0);  // leave space for icon
       display.print(counters[currentPage]);
     }
 
