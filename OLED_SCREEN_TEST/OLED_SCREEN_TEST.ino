@@ -220,10 +220,20 @@ static const Icon icons[] = {
   // Add more icons here later...
 };
 
+constexpr int NUM_ICONS = sizeof(icons) / sizeof(icons[0]);
+
 // Defining pins for buttons
 #define BUTTON_PIN1 1  // GP1
 #define BUTTON_PIN2 2  // GP2
 #define BUTTON_PIN3 3  // GP3
+
+// Selection modes
+static bool button3Held = false; // Todo: Refactor this because it's stupid and only used for the selectionmode
+bool button3OtherPressedDuringHold = false;
+unsigned long button3PressTime = 0;
+const unsigned long BUTTON3_TAP_MS = 500; // ms threshold to distinguish tap vs hold
+bool selectionMode = false;  
+int selectedItem = 0;  // 0 = icon, 1 = number
 
 // Button state tracking
 bool lastButtonState1 = LOW; // default LOW if using pull-down
@@ -321,7 +331,7 @@ void loadState() {
   }
 }
 
-void setup()   {
+void setup() {
   Serial.begin(115200);
 
   Wire.setSDA(20);
@@ -367,13 +377,6 @@ void setup()   {
 
 void mutateNumber(bool isPositive, int step) {
   int before = counters[currentPage];
-
-  // Todo: Debug code, remove this code later once we can store which icon is selected
-  if (selectedIcons[currentPage] < 5) {
-    selectedIcons[currentPage] += 1;
-  } else {
-    selectedIcons[currentPage] = 0;
-  }
 
   // Apply step
   if (isPositive) {
@@ -430,6 +433,101 @@ void settingsAction(bool isLeft) {
   }
 }
 
+// Call this inside handleButton when button 3 is involved
+void handleSelectionMode(int pin, bool state, bool lastState) {
+  unsigned long now = millis();
+
+  // Handle button 3 press/release/tap detection
+  if (pin == BUTTON_PIN3) {
+    // pressed down
+    if (!lastState && state) {
+      button3Held = true;
+      button3PressTime = now;
+      button3OtherPressedDuringHold = false; // reset for this press cycle -> Todo: pretty sure this var is bullshit and can be deleted
+      return;
+    } else if (lastState && !state) { // released
+      unsigned long held = now - button3PressTime;
+      button3Held = false;
+
+      // If no other button was pressed while button3 was held and duration < TAP_MS => a "tap"
+      if (!button3OtherPressedDuringHold && held < BUTTON3_TAP_MS) {
+        // Treat as single-tap: if in selection mode exit it, otherwise do the normal page switch
+        if (selectionMode) {
+          selectionMode = false;
+          renderScreen();
+        } else {
+          switchPage(1);
+          lastState = state;
+          return;
+        }
+      }
+      // else: this was a hold (or a chord) — do not toggle selectionMode here.
+      return;
+    }
+  }
+}
+
+// Cycles the selected icons based on if input is positive or negative. Keep in mind NUM_ICONS is 1 bigger than ICONS because it's 0-indexed.
+void cycleIcons(bool isPositiveIncrementer, bool lastState, bool state) {
+  if (lastState == LOW && state == HIGH) { 
+    if (isPositiveIncrementer) {
+        if (selectedIcons[currentPage] < NUM_ICONS - 1) {
+          selectedIcons[currentPage] += 1;
+        } else {
+          selectedIcons[currentPage] = 0;
+        }
+    } else {
+        if (selectedIcons[currentPage] < 1) {
+          selectedIcons[currentPage] = NUM_ICONS - 1;
+        } else {
+          selectedIcons[currentPage] -= 1;
+        }
+    }
+    renderScreen();
+  }
+}
+
+void handleNonMenuButton(int pin, bool &lastState, unsigned long &pressStart,
+                  unsigned long &lastRepeat, unsigned long &currentInterval,
+                  bool isPositive, bool state, unsigned long now) {
+  if (lastState == LOW && state == HIGH) {
+      // Button pressed
+      pressStart = now;
+      lastRepeat = now;
+      currentInterval = initialRepeat;
+    }
+
+    if (pin != 3 && lastState == HIGH && state == LOW) {
+      // Button released
+      if (currentPage == NUM_PAGES - 1) {
+        // On settings page → short press activates setting
+        settingsAction(isPositive); // left = contrast, right = power
+      } else {
+        if (now - pressStart < holdThreshold) {
+          // Short press → ±1
+          mutateNumber(isPositive, 1);
+        }
+      }
+    }
+
+    // Long press handling
+    if (pin != 3 && currentPage < NUM_PAGES - 1 && state == HIGH) {
+      if (now - pressStart >= holdThreshold) {
+        if (now - lastRepeat >= currentInterval) {
+          mutateNumber(isPositive, 10);
+          lastRepeat = now;
+
+          // Ramp speed
+          if (currentInterval > minInterval + stepDecrease) {
+            currentInterval -= stepDecrease;
+          } else {
+            currentInterval = minInterval;
+          }
+        }
+      }
+    }
+}
+
 void handleButton(int pin, bool &lastState, unsigned long &pressStart,
                   unsigned long &lastRepeat, unsigned long &currentInterval,
                   bool isPositive) {
@@ -437,56 +535,66 @@ void handleButton(int pin, bool &lastState, unsigned long &pressStart,
   bool state = digitalRead(pin);
   unsigned long now = millis();
 
-  if (lastState == LOW && state == HIGH) {
-    // Button pressed
-    pressStart = now;
-    lastRepeat = now;
-    currentInterval = initialRepeat;
+  // Todo: This invocation has a check that is also internally done, please clean this up (pin 3 check)
+  // Handle entering/exiting selection mode
+  if (pin == 3) {
+    handleSelectionMode(pin, state, lastState);
   }
 
-  if (lastState == HIGH && state == LOW) {
-    // Button released
-    // Simply call switchPage if button 3 is pressed for now
-    if (pin == 3) {
-      switchPage(1);
-      lastState = state;
+  // If button 3 is held and button 1 or 2 pressed → enter selection mode
+  if (button3Held) {
+    if (pin == 1 && lastState == LOW && state == HIGH) {
+      button3OtherPressedDuringHold = true;
+      selectionMode = true;
+      selectedItem = 0; // icon
+      renderScreen();
       return;
     }
-    if (currentPage == NUM_PAGES - 1) {
-      // On settings page → short press activates setting
-      settingsAction(isPositive); // left = contrast, right = power
-    } else {
-      if (now - pressStart < holdThreshold) {
-        // Short press → ±1
-        mutateNumber(isPositive, 1);
-      }
+    if (pin == 2 && lastState == LOW && state == HIGH) {
+      button3OtherPressedDuringHold = true;
+      selectionMode = true;
+      selectedItem = 1; // number
+      renderScreen();
+      return;
     }
   }
 
-  // Long press handling
-  if (pin != 3 && currentPage < NUM_PAGES - 1 && state == HIGH) {
-    if (now - pressStart >= holdThreshold) {
-      if (now - lastRepeat >= currentInterval) {
-        mutateNumber(isPositive, 10);
-        lastRepeat = now;
-
-        // Ramp speed
-        if (currentInterval > minInterval + stepDecrease) {
-          currentInterval -= stepDecrease;
-        } else {
-          currentInterval = minInterval;
-        }
+  // If in selection mode, up/down modifies either icon or number
+  if (selectionMode) {
+    if (pin == 1) {
+      // Up
+      if (selectedItem == 0) {
+        // cycle icon
+        cycleIcons(true, lastState, state);
+      } else {
+        // Handle number mutation
+        handleNonMenuButton(pin, lastState, pressStart, lastRepeat, currentInterval, isPositive, state, now);
+      }
+    } else if (pin == 2) {
+      // Down
+      if (selectedItem == 0) {
+        // cycle icon backwards
+        cycleIcons(false, lastState, state);
+      } else {
+        // Handle number mutation
+        handleNonMenuButton(pin, lastState, pressStart, lastRepeat, currentInterval, isPositive, state, now);
       }
     }
+    lastState = state;
+    return; // don’t fall through to normal handling
+  } else {
+    handleNonMenuButton(pin, lastState, pressStart, lastRepeat, currentInterval, isPositive, state, now);
   }
 
   lastState = state;
+
+  // Todo: Pretty sure we can always just call renderScreen() here and we can remove it everywhere else? If not, we should refactor so it's called after handleButton is ready.
 }
 
 void loop() {
+  handleButton(BUTTON_PIN3, lastButtonState3, pressStart, lastRepeatTime, currentInterval, true);
   handleButton(BUTTON_PIN1, lastButtonState1, pressStart, lastRepeatTime, currentInterval, true);
   handleButton(BUTTON_PIN2, lastButtonState2, pressStart, lastRepeatTime, currentInterval, false);
-  handleButton(BUTTON_PIN3, lastButtonState3, pressStart, lastRepeatTime, currentInterval, true);
 
     // Handle delta timeout
   if (deltaVisible && millis() - lastActionTime > changeDisplayDuration) {
@@ -522,6 +630,11 @@ String formatAsCounter(int x, int y) {
   return result;
 }
 
+// Utility function for drawing UI feedback
+void drawSelectionUnderline(int16_t x, int16_t y, int16_t w) {
+  display.drawLine(x, y + ICON_HEIGHT + 2, x + w, y + ICON_HEIGHT + 2, SH110X_WHITE);
+}
+
 void renderScreen() {
   display.clearDisplay();
 
@@ -550,18 +663,31 @@ void renderScreen() {
         SH110X_WHITE);
 
       // Draw number on the right
-      display.setCursor(30, 0);  // leave space for icon
+      int numberX = 30;
+      display.setCursor(numberX, 0);  // leave space for icon
       display.print(counters[currentPage]);
+
+      // Underline logic
+      if (selectionMode) {
+        int underlineY = h + 3; // 3px below text baseline
+        if (selectedItem == 0) {
+          // Underline icon
+          display.drawLine(iconX, underlineY,
+                           iconX + ICON_HEIGHT, underlineY,
+                           SH110X_WHITE);
+        } else if (selectedItem == 1) {
+          // Underline number
+          display.drawLine(numberX, underlineY,
+                           numberX + w, underlineY,
+                           SH110X_WHITE);
+        }   
+      }
     }
 
     // Delta (if active)
     if (deltaVisible && netChange != 0) {
       display.setTextSize(2);
-      if (counters[currentPage] < 10) {
-        display.setCursor(0, 50);
-      } else {
-        display.setCursor(0, 50); // adjust Y position
-      }
+      display.setCursor(0, 50);
       if (netChange > 0) {
         display.print("+");
       }
