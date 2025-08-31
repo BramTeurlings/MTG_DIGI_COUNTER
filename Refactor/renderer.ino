@@ -47,7 +47,7 @@ void renderCounter(uint8_t counterX, uint8_t counterY, uint8_t x, uint8_t y) {
     
     counter += String(counterX);
 
-    += "|";
+    counter += "|";
 
     // Add sign and value for y
     if (counterY >= 0) {
@@ -79,5 +79,5 @@ void renderBattery(float batteryPercentage, uint8_t x, uint8_t y) {
     display.setTextColor(SH110X_WHITE);
     display.setCursor(x, y);
 
-    
+
 }
