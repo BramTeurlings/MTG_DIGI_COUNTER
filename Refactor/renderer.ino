@@ -51,9 +51,9 @@ void renderCounter(uint8_t counterX, uint8_t counterY, uint8_t x, uint8_t y) {
 
     // Add sign and value for y
     if (counterY >= 0) {
-            counter += "+";
+        counter += "+";
     } else {
-    counter += "-";
+        counter += "-";
     }
 
     counter += String(counterY);
