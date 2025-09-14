@@ -234,6 +234,11 @@ unsigned long button3PressTime = 0;
 const unsigned long BUTTON3_TAP_MS = 500; // ms threshold to distinguish tap vs hold
 bool selectionMode = false;  
 int selectedItem = 0;  // 0 = left, 1 = right
+enum SelectionState {
+  SELECT_X,   // Only X is selected
+  SELECT_Y,   // Only Y is selected
+  SELECT_XY   // Both X and Y are affected (default)
+};
 
 // Button state tracking
 bool lastButtonState1 = LOW; // default LOW if using pull-down
@@ -381,29 +386,34 @@ void setup() {
   renderScreen();
 }
 
-void mutateNumber(bool isPositive, int step) {
-  int before = counters[currentPage];
+void mutateNumber(bool isPositive, int step, int *counterPtr, bool allowNegative) {
+  int before = counterPtr[currentPage];
 
   // Apply step
   if (isPositive) {
-    counters[currentPage] += step;
+    counterPtr[currentPage] += step;
   } else {
-    counters[currentPage] -= step;
+    counterPtr[currentPage] -= step;
   }
 
   // Clamp
-  if (counters[currentPage] > 99) counters[currentPage] = 99;
-  if (counters[currentPage] < 0)  counters[currentPage] = 0;
+  if (counterPtr[currentPage] > 99) counterPtr[currentPage] = 99;
+  if (allowNegative) {
+    if (counterPtr[currentPage] < -99) {
+      counterPtr[currentPage] = -99;
+    }
+  } else if (counterPtr[currentPage] < 0) {
+    counterPtr[currentPage] = 0;
+  }
 
   // Actual change is the difference between before and after
-  int actualDelta = counters[currentPage] - before;
+  int actualDelta = counterPtr[currentPage] - before;
   netChange += actualDelta;
 
   // Keep time since last mutation.
   lastActionTime = millis();
   deltaVisible = true;
 
-  renderScreen(); // update the screen with the new number
   // saveState();  // write to flash every change
   delay(10); // debounce delay
 }
@@ -473,42 +483,6 @@ void handleSelectionMode(int pin, bool state, bool lastState) {
   }
 }
 
-// Increments or decrements the +x/+y counter. Limit set to +99/-99
-void handleXYMutation(bool isX, bool isPositiveIncrementer, bool lastState, bool state) {
-  if (lastState == LOW && state == HIGH) { 
-    if (isPositiveIncrementer) {
-      if (isX) {
-        if (countersX[currentPage] + 1 < 100) {
-          countersX[currentPage] += 1;
-        } else {
-          countersX[currentPage] = 99;
-        }
-      } else {
-        if (countersY[currentPage] + 1 < 100) {
-          countersY[currentPage] += 1;
-        } else {
-          countersY[currentPage] = 99;
-        }
-      }
-    } else {
-      if (isX) {
-        if (countersX[currentPage] - 1 > -100) {
-          countersX[currentPage] -= 1;
-        } else {
-          countersX[currentPage] = -99;
-        }
-      } else {
-        if (countersY[currentPage] - 1 > -100) {
-          countersY[currentPage] -= 1;
-        } else {
-          countersY[currentPage] = -99;
-        }
-      }
-    }
-    renderScreen();
-  }
-}
-
 // Cycles the selected icons based on if input is positive or negative. Keep in mind NUM_ICONS is 1 bigger than ICONS because it's 0-indexed.
 void cycleIcons(bool isPositiveIncrementer, bool lastState, bool state) {
   if (lastState == LOW && state == HIGH) { 
@@ -531,7 +505,7 @@ void cycleIcons(bool isPositiveIncrementer, bool lastState, bool state) {
 
 void handleNonMenuButton(int pin, bool &lastState, unsigned long &pressStart,
                   unsigned long &lastRepeat, unsigned long &currentInterval,
-                  bool isPositive, bool state, unsigned long now) {
+                  bool isPositive, SelectionState selectionState, bool state, unsigned long now) {
   if (lastState == LOW && state == HIGH) {
       // Button pressed
       pressStart = now;
@@ -547,7 +521,25 @@ void handleNonMenuButton(int pin, bool &lastState, unsigned long &pressStart,
       } else {
         if (now - pressStart < holdThreshold) {
           // Short press → ±1
-          mutateNumber(isPositive, 1);
+          if (currentPage == NUM_PAGES - 2) {
+            // On +x/+y page
+            switch (selectionState) {
+              case SELECT_X:
+                mutateNumber(isPositive, 1, countersX, true);
+                break;
+              case SELECT_Y:
+                mutateNumber(isPositive, 1, countersY, true);
+                break;
+              case SELECT_XY:
+                mutateNumber(isPositive, 1, countersX, true);
+                mutateNumber(isPositive, 1, countersY, true);
+              default:
+                break;
+            }
+          } else {
+            mutateNumber(isPositive, 1, counters, false);
+          }
+          renderScreen();
         }
       }
     }
@@ -556,7 +548,24 @@ void handleNonMenuButton(int pin, bool &lastState, unsigned long &pressStart,
     if (pin != 3 && currentPage < NUM_PAGES - 1 && state == HIGH) {
       if (now - pressStart >= holdThreshold) {
         if (now - lastRepeat >= currentInterval) {
-          mutateNumber(isPositive, 10);
+          if (currentPage == NUM_PAGES - 2) {
+            // On +x/+y page
+            switch (selectionState) {
+              case SELECT_X:
+                mutateNumber(isPositive, 10, countersX, true);
+                break;
+              case SELECT_Y:
+                mutateNumber(isPositive, 10, countersY, true);
+                break;
+              case SELECT_XY:
+                mutateNumber(isPositive, 10, countersX, true);
+                mutateNumber(isPositive, 10, countersY, true);
+              default:
+                break;
+            }
+          } else {
+            mutateNumber(isPositive, 10, counters, false);
+          }
           lastRepeat = now;
 
           // Ramp speed
@@ -565,6 +574,7 @@ void handleNonMenuButton(int pin, bool &lastState, unsigned long &pressStart,
           } else {
             currentInterval = minInterval;
           }
+          renderScreen();
         }
       }
     }
@@ -606,50 +616,41 @@ void handleButton(int pin, bool &lastState, unsigned long &pressStart,
     if (pin == 1) {
       // Up
       if (selectedItem == 0) {
+        // Left item selected
         if (currentPage == NUM_PAGES - 2) {
           // +x/+y counter page
-          handleXYMutation(true, true, lastState, state);
+          handleNonMenuButton(pin, lastState, pressStart, lastRepeat, currentInterval, isPositive, SelectionState::SELECT_X, state, now);
         } else {
           // cycle icon
           cycleIcons(true, lastState, state);
         }
       } else {
-        if (currentPage == NUM_PAGES - 2) {
-          // +x/+y counter page
-          handleXYMutation(false, true, lastState, state);
-        } else {
-          // Handle number mutation
-          handleNonMenuButton(pin, lastState, pressStart, lastRepeat, currentInterval, isPositive, state, now);
-        }
+        // Right item selected
+        handleNonMenuButton(pin, lastState, pressStart, lastRepeat, currentInterval, isPositive, SelectionState::SELECT_Y, state, now);
       }
     } else if (pin == 2) {
       // Down
       if (selectedItem == 0) {
+        // Left item selected
         if (currentPage == NUM_PAGES - 2) {
           // +x/+y counter page
-          handleXYMutation(true, false, lastState, state);
+          handleNonMenuButton(pin, lastState, pressStart, lastRepeat, currentInterval, isPositive, SelectionState::SELECT_X, state, now);
         } else {
           // cycle icon backwards
           cycleIcons(false, lastState, state);
         }
       } else {
-        if (currentPage == NUM_PAGES - 2) {
-          // +x/+y counter page
-          handleXYMutation(false, false, lastState, state);
-        }
-        // Handle number mutation
-        handleNonMenuButton(pin, lastState, pressStart, lastRepeat, currentInterval, isPositive, state, now);
+        // Right item selected
+        handleNonMenuButton(pin, lastState, pressStart, lastRepeat, currentInterval, isPositive, SelectionState::SELECT_Y, state, now);
       }
     }
     lastState = state;
     return; // don’t fall through to normal handling
   } else {
-    handleNonMenuButton(pin, lastState, pressStart, lastRepeat, currentInterval, isPositive, state, now);
+    handleNonMenuButton(pin, lastState, pressStart, lastRepeat, currentInterval, isPositive, SelectionState::SELECT_XY, state, now);
   }
 
   lastState = state;
-
-  // Todo: Pretty sure we can always just call renderScreen() here and we can remove it everywhere else? If not, we should refactor so it's called after handleButton is ready.
 }
 
 void loop() {
