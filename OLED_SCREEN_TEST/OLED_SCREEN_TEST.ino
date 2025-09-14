@@ -580,6 +580,7 @@ void handleNonMenuButton(int pin, bool &lastState, unsigned long &pressStart,
     }
 }
 
+// Todo: Handle all three buttons (pins) in one loop so we can do something if all three are pressed. Otherwise it leads to strange behavior if both 1 & 2 are pressed at once.
 void handleButton(int pin, bool &lastState, unsigned long &pressStart,
                   unsigned long &lastRepeat, unsigned long &currentInterval,
                   bool isPositive) {
