@@ -233,7 +233,7 @@ bool button3OtherPressedDuringHold = false;
 unsigned long button3PressTime = 0;
 const unsigned long BUTTON3_TAP_MS = 500; // ms threshold to distinguish tap vs hold
 bool selectionMode = false;  
-int selectedItem = 0;  // 0 = icon, 1 = number
+int selectedItem = 0;  // 0 = left, 1 = right
 
 // Button state tracking
 bool lastButtonState1 = LOW; // default LOW if using pull-down
@@ -265,7 +265,9 @@ int currentContrast = 3; // start at 100%
 
 // Page system
 const int NUM_PAGES = 4;
-int counters[NUM_PAGES - 1] = {0, 0, 0}; // The value where we store the main number being displayed
+int counters[NUM_PAGES - 1] = {0, 0, 0}; // The value where we store the singlular number being displayed
+int countersX[NUM_PAGES - 1] = {0, 0, 0}; // The value where we store the X number being displayed
+int countersY[NUM_PAGES - 1] = {0, 0, 0}; // The value where we store the Y number being displayed
 int selectedIcons[NUM_PAGES - 1] = {0, 0, 0}; // Index of icon per page
 int currentPage = 0;
 
@@ -283,6 +285,8 @@ void saveState() {
   for (int i = 0; i < NUM_PAGES - 1; i++) {
     JsonObject page = arr.add<JsonObject>();
     page["value"] = counters[i];
+    page["valueX"] = countersX[i];
+    page["valueY"] = countersY[i];
     page["icon"] = selectedIcons[i];
   }
 
@@ -325,6 +329,8 @@ void loadState() {
   for (JsonObject page : arr) {
     if (i < NUM_PAGES - 1) {
       counters[i] = page["value"] | 0;
+      countersX[i] = page["valueX"] | 0;
+      countersY[i] = page["valueY"] | 0;
       selectedIcons[i] = page["icon"] | 0;
     }
     i++;
@@ -467,6 +473,42 @@ void handleSelectionMode(int pin, bool state, bool lastState) {
   }
 }
 
+// Increments or decrements the +x/+y counter. Limit set to +99/-99
+void handleXYMutation(bool isX, bool isPositiveIncrementer, bool lastState, bool state) {
+  if (lastState == LOW && state == HIGH) { 
+    if (isPositiveIncrementer) {
+      if (isX) {
+        if (countersX[currentPage] + 1 < 100) {
+          countersX[currentPage] += 1;
+        } else {
+          countersX[currentPage] = 99;
+        }
+      } else {
+        if (countersY[currentPage] + 1 < 100) {
+          countersY[currentPage] += 1;
+        } else {
+          countersY[currentPage] = 99;
+        }
+      }
+    } else {
+      if (isX) {
+        if (countersX[currentPage] - 1 > -100) {
+          countersX[currentPage] -= 1;
+        } else {
+          countersX[currentPage] = -99;
+        }
+      } else {
+        if (countersY[currentPage] - 1 > -100) {
+          countersY[currentPage] -= 1;
+        } else {
+          countersY[currentPage] = -99;
+        }
+      }
+    }
+    renderScreen();
+  }
+}
+
 // Cycles the selected icons based on if input is positive or negative. Keep in mind NUM_ICONS is 1 bigger than ICONS because it's 0-indexed.
 void cycleIcons(bool isPositiveIncrementer, bool lastState, bool state) {
   if (lastState == LOW && state == HIGH) { 
@@ -546,14 +588,14 @@ void handleButton(int pin, bool &lastState, unsigned long &pressStart,
     if (pin == 1 && lastState == LOW && state == HIGH) {
       button3OtherPressedDuringHold = true;
       selectionMode = true;
-      selectedItem = 0; // icon
+      selectedItem = 0; // left
       renderScreen();
       return;
     }
     if (pin == 2 && lastState == LOW && state == HIGH) {
       button3OtherPressedDuringHold = true;
       selectionMode = true;
-      selectedItem = 1; // number
+      selectedItem = 1; // right
       renderScreen();
       return;
     }
@@ -564,18 +606,37 @@ void handleButton(int pin, bool &lastState, unsigned long &pressStart,
     if (pin == 1) {
       // Up
       if (selectedItem == 0) {
-        // cycle icon
-        cycleIcons(true, lastState, state);
+        if (currentPage == NUM_PAGES - 2) {
+          // +x/+y counter page
+          handleXYMutation(true, true, lastState, state);
+        } else {
+          // cycle icon
+          cycleIcons(true, lastState, state);
+        }
       } else {
-        // Handle number mutation
-        handleNonMenuButton(pin, lastState, pressStart, lastRepeat, currentInterval, isPositive, state, now);
+        if (currentPage == NUM_PAGES - 2) {
+          // +x/+y counter page
+          handleXYMutation(false, true, lastState, state);
+        } else {
+          // Handle number mutation
+          handleNonMenuButton(pin, lastState, pressStart, lastRepeat, currentInterval, isPositive, state, now);
+        }
       }
     } else if (pin == 2) {
       // Down
       if (selectedItem == 0) {
-        // cycle icon backwards
-        cycleIcons(false, lastState, state);
+        if (currentPage == NUM_PAGES - 2) {
+          // +x/+y counter page
+          handleXYMutation(true, false, lastState, state);
+        } else {
+          // cycle icon backwards
+          cycleIcons(false, lastState, state);
+        }
       } else {
+        if (currentPage == NUM_PAGES - 2) {
+          // +x/+y counter page
+          handleXYMutation(false, false, lastState, state);
+        }
         // Handle number mutation
         handleNonMenuButton(pin, lastState, pressStart, lastRepeat, currentInterval, isPositive, state, now);
       }
@@ -612,8 +673,6 @@ String formatAsCounter(int x, int y) {
   // Add sign and value for x
   if (x >= 0) {
     result += "+";
-  } else {
-    result += "-";
   }
   result += String(x);
 
@@ -622,8 +681,6 @@ String formatAsCounter(int x, int y) {
   // Add sign and value for y
   if (y >= 0) {
     result += "+";
-  } else {
-    result += "-";
   }
   result += String(y);
 
@@ -643,14 +700,33 @@ void renderScreen() {
     display.setTextSize(5);
     display.setTextColor(SH110X_WHITE);
     display.setCursor(0, 0);
+    // Set up variables for getting text bounds
+    int16_t x1, y1;
+    uint16_t w, h;
     if (currentPage == NUM_PAGES - 2) {
       display.setTextSize(3);
-      display.print(formatAsCounter(counters[currentPage], counters[currentPage]));
+      display.print(formatAsCounter(countersX[currentPage], countersY[currentPage]));
+      // Underline logic
+      if (selectionMode) {
+        if (selectedItem == 0) {
+          // Underline X
+          String leftPart = "+" + String(abs(countersX[currentPage]));
+          display.getTextBounds(leftPart, 0, 0, &x1, &y1, &w, &h);
+          int underlineY = h + 3; // 3px below baseline
+          display.drawLine(x1, underlineY, x1 + w, underlineY, SH110X_WHITE);
+        } else if (selectedItem == 1) {
+          // Underline Y
+          String leftPartOffset = "+" + String(abs(countersX[currentPage])) + "|";
+          display.getTextBounds(leftPartOffset, 0, 0, &x1, &y1, &w, &h);
+          int offsetX = w; // x position where +y starts
+          String rightPart = "+" + String(abs(countersY[currentPage]));
+          display.getTextBounds(rightPart, offsetX, 0, &x1, &y1, &w, &h);
+          int underlineY = h + 3; // 3px below baseline
+          display.drawLine(x1, underlineY, x1 + w, underlineY, SH110X_WHITE);
+        }   
+      }
       display.setTextSize(5);
     } else {
-      // Get text bounds
-      int16_t x1, y1;
-      uint16_t w, h;
       String textToDraw = String(counters[currentPage]);
       display.getTextBounds(textToDraw, 0, 0, &x1, &y1, &w, &h);
       // Draw icon on left
