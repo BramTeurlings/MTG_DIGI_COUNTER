@@ -427,7 +427,6 @@ void switchPage(int direction) {
   deltaVisible = false;
   lastActionTime = millis();
 
-  renderScreen();
   // saveState(); Todo: Uncomment all saveState() calls later
 }
 
@@ -439,7 +438,6 @@ void settingsAction(bool isLeft) {
     Serial.print("Contrast set to ");
     Serial.println(contrastLevels[currentContrast]);
     saveState();
-    renderScreen();
   } else {
     // Display a blank image on the display
     display.clearDisplay();
@@ -450,7 +448,7 @@ void settingsAction(bool isLeft) {
 }
 
 // Call this inside handleButton when button 3 is involved
-void handleSelectionMode(int pin, bool state, bool lastState) {
+bool handleSelectionMode(int pin, bool state, bool lastState) {
   unsigned long now = millis();
 
   // Handle button 3 press/release/tap detection
@@ -460,7 +458,7 @@ void handleSelectionMode(int pin, bool state, bool lastState) {
       button3Held = true;
       button3PressTime = now;
       button3OtherPressedDuringHold = false; // reset for this press cycle -> Todo: pretty sure this var is bullshit and can be deleted
-      return;
+      return false;
     } else if (lastState && !state) { // released
       unsigned long held = now - button3PressTime;
       button3Held = false;
@@ -470,21 +468,23 @@ void handleSelectionMode(int pin, bool state, bool lastState) {
         // Treat as single-tap: if in selection mode exit it, otherwise do the normal page switch
         if (selectionMode) {
           selectionMode = false;
-          renderScreen();
+          return true;
         } else {
           switchPage(1);
           lastState = state;
-          return;
+          return true;
         }
       }
       // else: this was a hold (or a chord) — do not toggle selectionMode here.
-      return;
+      return false;
     }
   }
+  return false;
 }
 
 // Cycles the selected icons based on if input is positive or negative. Keep in mind NUM_ICONS is 1 bigger than ICONS because it's 0-indexed.
-void cycleIcons(bool isPositiveIncrementer, bool lastState, bool state) {
+bool cycleIcons(bool isPositiveIncrementer, bool lastState, bool state) {
+  bool result = false;
   if (lastState == LOW && state == HIGH) { 
     if (isPositiveIncrementer) {
         if (selectedIcons[currentPage] < NUM_ICONS - 1) {
@@ -499,13 +499,15 @@ void cycleIcons(bool isPositiveIncrementer, bool lastState, bool state) {
           selectedIcons[currentPage] -= 1;
         }
     }
-    renderScreen();
+    result = true;
   }
+  return result;
 }
 
-void handleNonMenuButton(int pin, bool &lastState, unsigned long &pressStart,
+bool handleNonMenuButton(int pin, bool &lastState, unsigned long &pressStart,
                   unsigned long &lastRepeat, unsigned long &currentInterval,
                   bool isPositive, SelectionState selectionState, bool state, unsigned long now) {
+  bool result = false;
   if (lastState == LOW && state == HIGH) {
       // Button pressed
       pressStart = now;
@@ -518,6 +520,7 @@ void handleNonMenuButton(int pin, bool &lastState, unsigned long &pressStart,
       if (currentPage == NUM_PAGES - 1) {
         // On settings page → short press activates setting
         settingsAction(isPositive); // left = contrast, right = power
+        result = true;
       } else {
         if (now - pressStart < holdThreshold) {
           // Short press → ±1
@@ -539,7 +542,7 @@ void handleNonMenuButton(int pin, bool &lastState, unsigned long &pressStart,
           } else {
             mutateNumber(isPositive, 1, counters, false);
           }
-          renderScreen();
+          result = true;
         }
       }
     }
@@ -574,24 +577,27 @@ void handleNonMenuButton(int pin, bool &lastState, unsigned long &pressStart,
           } else {
             currentInterval = minInterval;
           }
-          renderScreen();
+          result = true;
         }
       }
     }
+  return result;
 }
 
 // Todo: Handle all three buttons (pins) in one loop so we can do something if all three are pressed. Otherwise it leads to strange behavior if both 1 & 2 are pressed at once.
-void handleButton(int pin, bool &lastState, unsigned long &pressStart,
+bool handleButton(int pin, bool &lastState, unsigned long &pressStart,
                   unsigned long &lastRepeat, unsigned long &currentInterval,
                   bool isPositive) {
-
+  bool result = false;
   bool state = digitalRead(pin);
   unsigned long now = millis();
 
   // Todo: This invocation has a check that is also internally done, please clean this up (pin 3 check)
   // Handle entering/exiting selection mode
   if (pin == 3) {
-    handleSelectionMode(pin, state, lastState);
+    if (handleSelectionMode(pin, state, lastState)) {
+      result = true;
+    }
   }
 
   // If button 3 is held and button 1 or 2 pressed → enter selection mode
@@ -600,15 +606,13 @@ void handleButton(int pin, bool &lastState, unsigned long &pressStart,
       button3OtherPressedDuringHold = true;
       selectionMode = true;
       selectedItem = 0; // left
-      renderScreen();
-      return;
+      return true;
     }
     if (pin == 2 && lastState == LOW && state == HIGH) {
       button3OtherPressedDuringHold = true;
       selectionMode = true;
       selectedItem = 1; // right
-      renderScreen();
-      return;
+      return true;
     }
   }
 
@@ -620,14 +624,18 @@ void handleButton(int pin, bool &lastState, unsigned long &pressStart,
         // Left item selected
         if (currentPage == NUM_PAGES - 2) {
           // +x/+y counter page
-          handleNonMenuButton(pin, lastState, pressStart, lastRepeat, currentInterval, isPositive, SelectionState::SELECT_X, state, now);
+            if (handleNonMenuButton(pin, lastState, pressStart, lastRepeat, currentInterval, isPositive, SelectionState::SELECT_X, state, now)) {
+              result = true;
+            }
         } else {
           // cycle icon
-          cycleIcons(true, lastState, state);
+          result = cycleIcons(true, lastState, state);
         }
       } else {
         // Right item selected
-        handleNonMenuButton(pin, lastState, pressStart, lastRepeat, currentInterval, isPositive, SelectionState::SELECT_Y, state, now);
+        if (handleNonMenuButton(pin, lastState, pressStart, lastRepeat, currentInterval, isPositive, SelectionState::SELECT_Y, state, now)) {
+          result = true;
+        }
       }
     } else if (pin == 2) {
       // Down
@@ -635,34 +643,49 @@ void handleButton(int pin, bool &lastState, unsigned long &pressStart,
         // Left item selected
         if (currentPage == NUM_PAGES - 2) {
           // +x/+y counter page
-          handleNonMenuButton(pin, lastState, pressStart, lastRepeat, currentInterval, isPositive, SelectionState::SELECT_X, state, now);
+          if (handleNonMenuButton(pin, lastState, pressStart, lastRepeat, currentInterval, isPositive, SelectionState::SELECT_X, state, now)) {
+            result = true;
+          }
         } else {
           // cycle icon backwards
-          cycleIcons(false, lastState, state);
+          result = cycleIcons(false, lastState, state);
         }
       } else {
         // Right item selected
-        handleNonMenuButton(pin, lastState, pressStart, lastRepeat, currentInterval, isPositive, SelectionState::SELECT_Y, state, now);
+        if (handleNonMenuButton(pin, lastState, pressStart, lastRepeat, currentInterval, isPositive, SelectionState::SELECT_Y, state, now)) {
+          result = true;
+        }
       }
     }
     lastState = state;
-    return; // don’t fall through to normal handling
+    return result; // don’t fall through to normal handling
   } else {
-    handleNonMenuButton(pin, lastState, pressStart, lastRepeat, currentInterval, isPositive, SelectionState::SELECT_XY, state, now);
+    if (handleNonMenuButton(pin, lastState, pressStart, lastRepeat, currentInterval, isPositive, SelectionState::SELECT_XY, state, now)) {
+      result = true;
+    }
   }
 
   lastState = state;
+  return result;
 }
 
 void loop() {
-  handleButton(BUTTON_PIN3, lastButtonState3, pressStart, lastRepeatTime, currentInterval, true);
-  handleButton(BUTTON_PIN1, lastButtonState1, pressStart, lastRepeatTime, currentInterval, true);
-  handleButton(BUTTON_PIN2, lastButtonState2, pressStart, lastRepeatTime, currentInterval, false);
+  bool doRender = false;
+  // Handle buttons until one of them calls for the UI to be updated (i.e. returns true)
+  if (!(doRender = handleButton(BUTTON_PIN3, lastButtonState3, pressStart, lastRepeatTime, currentInterval, true))) {
+    if (!(doRender = handleButton(BUTTON_PIN1, lastButtonState1, pressStart, lastRepeatTime, currentInterval, true))) {
+      doRender = handleButton(BUTTON_PIN2, lastButtonState2, pressStart, lastRepeatTime, currentInterval, false);
+    }
+  }
 
-    // Handle delta timeout
+  // Handle delta timeout
   if (deltaVisible && millis() - lastActionTime > changeDisplayDuration) {
     netChange = 0;
     deltaVisible = false;
+    doRender = true;
+  }
+
+  if (doRender) {
     renderScreen();
   }
 
