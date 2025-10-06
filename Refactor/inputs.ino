@@ -11,34 +11,51 @@
 #define LEFTBUTTONPIN   1
 #define MIDDLEBUTTONPIN 2
 #define RIGHTBUTTONPIN  3
+#define INTERRUPTBUTTONPIN 4
 
 #define PRESSBUFFER 32
 
-volatile uint8_t button_presses[PRESSBUFFER];
+volatile bool asleep = false;
 
+uint8_t button_presses[PRESSBUFFER];
+uint8_t current_presses = 0;
 
-void attachInterrupts() {
+void setupPins() {
   pinMode(LEFTBUTTONPIN,    INPUT_PULLDOWN);
   pinMode(MIDDLEBUTTONPIN,  INPUT_PULLDOWN); 
   pinMode(RIGHTBUTTONPIN,   INPUT_PULLDOWN); 
+  pinMode(INTERRUPTBUTTONPIN, INPUT_PULLDOWN);
 
-  attachInterrupt(digitalPinToInterrupt(LEFTBUTTONPIN),     leftInterrupt,      RISING);
-  attachInterrupt(digitalPinToInterrupt(MIDDLEBUTTONPIN),   middleInterrupt,    RISING);
-  attachInterrupt(digitalPinToInterrupt(RIGHTBUTTONPIN),    rightInterrupt,     RISING);
+  attachInterrupt(digitalPinToInterrupt(INTERRUPTBUTTONPIN),     interrupt,      RISING);
+  
+  button_presses[PRESSBUFFER - 1] = 0; //Setup the ring buffers location tracker
 }
 
-void leftInterrupt() {
-    button_presses += 1;
+void interrupt() {
+    if asleep {
+        asleep = false;
+        //Wake function
+
+        for (int i = 0; i < (PRESSBUFFER - 1); i++) { //Reset the buffer on wake
+            button_presses[i] = 0;
+        }
+    }
 }
 
-void middleInterrupt() {
-    button_presses += 2;
+void updatePinStates() {
+    button_presses[PRESSBUFFER - 1] = button_presses[PRESSBUFFER - 1] + 1; //Increment ring buffer
+    if button_presses[PRESSBUFFER - 1] == PRESSBUFFER - 1 {
+        button_presses[PRESSBUFFER - 1] = 0; //Reset ring buffer counter
+    }
+    
+    button_presses[button_presses[PRESSBUFFER - 1]] = 0; //Reset currently targetted rinbuffer
+    //Store the button presses with offset
+    button_presses[button_presses[PRESSBUFFER - 1]] = button_presses[button_presses[PRESSBUFFER - 1]] + (digitalRead(LEFTBUTTONPIN)   << 0);
+    button_presses[button_presses[PRESSBUFFER - 1]] = button_presses[button_presses[PRESSBUFFER - 1]] + (digitalRead(MIDDLEBUTTONPIN) << 1);
+    button_presses[button_presses[PRESSBUFFER - 1]] = button_presses[button_presses[PRESSBUFFER - 1]] + (digitalRead(RIGHTBUTTONPIN)  << 2);
+    
 }
 
-void rightInterrupt() {
-    button_presses += 3;
-}
-
-void generalInterrupt() {
-    button_presses += 0;
+uint8_t lastPress() {
+    return button_presses[button_presses[PRESSBUFFER - 1]];
 }
