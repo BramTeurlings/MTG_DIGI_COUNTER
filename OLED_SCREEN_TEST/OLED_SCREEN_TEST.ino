@@ -248,11 +248,14 @@ bool lastButtonState3 = LOW; // default LOW if using pull-down
 // Holds the timestamp for the current press down action
 unsigned long pressStart = 0;
 
-// Hold settings
+// Hold button increment/decrement settings
 const unsigned long holdThreshold = 1000; // 1s before starting acceleration
 const unsigned long initialRepeat = 1000; // first repeat after 1s
 const unsigned long stepDecrease = 200;   // speed up each cycle
 const unsigned long minInterval = 200;    // fastest speed
+
+// Hold power off button settings
+const unsigned long holdPowerButtonThreshold = 3000; // 3s before the system shuts off when holding down the third button.
 
 // For tracking repeat timing
 unsigned long lastRepeatTime = 0;
@@ -613,6 +616,12 @@ bool handleButton(int pin, bool &lastState, unsigned long &pressStart,
       selectionMode = true;
       selectedItem = 1; // right
       return true;
+    }
+    if (now - button3PressTime > holdPowerButtonThreshold) {
+      // Todo: This keeps triggering until you let go of the button, that's fine if the CPU kills itself here though.
+      // Shut down the system
+      display.clearDisplay();
+      return false;
     }
   }
 
