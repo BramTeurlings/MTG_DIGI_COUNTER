@@ -621,6 +621,7 @@ bool handleButton(int pin, bool &lastState, unsigned long &pressStart,
       // Todo: This keeps triggering until you let go of the button, that's fine if the CPU kills itself here though.
       // Shut down the system
       display.clearDisplay();
+      display.display();
       return false;
     }
   }
