@@ -36,7 +36,6 @@ Adafruit_SH1107 display = Adafruit_SH1107(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OL
 #define ICON_HEIGHT   24
 #define ICON_WIDTH    24
 
-
 // 'w_8bit_bw', 24x24px
 const unsigned char epd_bitmap_w_8bit_bw [] PROGMEM = {
 0b00000111, 0b11111111, 0b11100000,
@@ -200,6 +199,19 @@ const unsigned char epd_bitmap_r_8bit_bw [] PROGMEM = {
 0b00000111, 0b11111111, 0b11100000
 };
 
+#define BATTERY_WIDTH 16
+#define BATTERY_HEIGHT 8
+
+static const unsigned char PROGMEM battery[] = { 
+0b11111111, 0b11111100,  
+0b10000000, 0b00000111,  
+0b10000000, 0b00000001,  
+0b10000000, 0b00000001, 
+0b10000000, 0b00000001, 
+0b10000000, 0b00000001, 
+0b10000000, 0b00000111, 
+0b11111111, 0b11111100, 
+};
 
 // Icon storage
 #define ICON_SIZE 24
@@ -823,7 +835,7 @@ void renderScreen() {
   // Page indicator
   int boxSize = 6;
   int spacing = 10;
-  int initialCursor = 120;
+  int initialCursor = 98;
   for (int i = 0; i < NUM_PAGES; i++) {
     int x = initialCursor - i * spacing;
     if (i == currentPage) {
@@ -832,6 +844,13 @@ void renderScreen() {
       display.drawRect(x, 55, boxSize, boxSize, SH110X_WHITE);
     }
   }
+
+  // Battery indicator
+  int batteryX = 108;
+  int batteryY = 54;
+  display.drawBitmap(batteryX, batteryY, battery, BATTERY_WIDTH, BATTERY_HEIGHT, SH110X_WHITE);
+  // Todo: Make the width of the box variable based on battery level
+  display.fillRect(batteryX + 1, batteryY + 1, 14, 6, SH110X_WHITE);
 
   display.display();
 }
