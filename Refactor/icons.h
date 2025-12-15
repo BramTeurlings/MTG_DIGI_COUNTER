@@ -163,7 +163,8 @@ const unsigned char epd_bitmap_r_8bit_bw [] PROGMEM = {
 
 
 // Icon storage
-#define ICON_SIZE 24
+#define ICON_HEIGHT   24
+#define ICON_WIDTH    24
 
 struct Icon {
     const unsigned char *bitmap;
@@ -172,11 +173,10 @@ struct Icon {
 };
 
 static const Icon icons[] = {
-    { epd_bitmap_w_8bit_bw, ICON_HEIGHT, ICON_HEIGHT },
-    { epd_bitmap_u_8bit_bw, ICON_HEIGHT, ICON_HEIGHT },
-    { epd_bitmap_b_8bit_bw, ICON_HEIGHT, ICON_HEIGHT },
-    { epd_bitmap_r_8bit_bw, ICON_HEIGHT, ICON_HEIGHT },
-    { epd_bitmap_g_8bit_bw, ICON_HEIGHT, ICON_HEIGHT },
-    { epd_bitmap_c_8bit_bw, ICON_HEIGHT, ICON_HEIGHT },
-    // Add more icons here later...
+    { epd_bitmap_w_8bit_bw, ICON_WIDTH, ICON_HEIGHT },
+    { epd_bitmap_u_8bit_bw, ICON_WIDTH, ICON_HEIGHT },
+    { epd_bitmap_b_8bit_bw, ICON_WIDTH, ICON_HEIGHT },
+    { epd_bitmap_r_8bit_bw, ICON_WIDTH, ICON_HEIGHT },
+    { epd_bitmap_g_8bit_bw, ICON_WIDTH, ICON_HEIGHT },
+    { epd_bitmap_c_8bit_bw, ICON_WIDTH, ICON_HEIGHT },
 };
