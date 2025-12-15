@@ -21,17 +21,10 @@
 #include <LittleFS.h>
 #include <ArduinoJson.h>
 
-#define SCREEN_WIDTH 64  // OLED display width, in pixels
+#define SCREEN_WIDTH 64   // OLED display width, in pixels
 #define SCREEN_HEIGHT 128 // OLED display height, in pixels
 #define OLED_RESET -1     // can set an oled reset pin if desired
 Adafruit_SH1107 display = Adafruit_SH1107(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET, 1000000, 100000);
-
-
-#define NUMFLAKES 10
-#define XPOS 0
-#define YPOS 1
-#define DELTAY 2
-
 
 #define ICON_HEIGHT   24
 #define ICON_WIDTH    24
@@ -199,10 +192,83 @@ const unsigned char epd_bitmap_r_8bit_bw [] PROGMEM = {
 0b00000111, 0b11111111, 0b11100000
 };
 
+#define SETTINGS_ICON_WIDTH 32
+#define SETTINGS_ICON_HEIGHT 32
+
+const unsigned char epd_bitmap_brightness_8bit [] PROGMEM = { 
+0b00000000, 0b00000000, 0b00000000, 0b00000000,
+0b00000000, 0b00000001, 0b10000000, 0b00000000,
+0b00000000, 0b00000001, 0b10000000, 0b00000000,
+0b00000000, 0b00000001, 0b10000000, 0b00000000,
+0b00000000, 0b00000001, 0b10000000, 0b00000000,
+0b00000110, 0b00000000, 0b00000000, 0b01100000,
+0b00000111, 0b00000000, 0b00000000, 0b11100000,
+0b00000011, 0b10000000, 0b00000001, 0b11000000,
+0b00000001, 0b10001111, 0b11110001, 0b10000000,
+0b00000000, 0b00011111, 0b10111000, 0b00000000,
+0b00000000, 0b00111111, 0b10001100, 0b00000000,
+0b00000000, 0b01111111, 0b10000110, 0b00000000,
+0b00000000, 0b11111111, 0b10000011, 0b00000000,
+0b00000000, 0b11111111, 0b10000011, 0b00000000,
+0b00000000, 0b11111111, 0b10000001, 0b00000000,
+0b01111000, 0b11111111, 0b10000001, 0b00011110,
+0b01111000, 0b11111111, 0b10000001, 0b00011110,
+0b00000000, 0b11111111, 0b10000001, 0b00000000,
+0b00000000, 0b11111111, 0b10000011, 0b00000000,
+0b00000000, 0b11111111, 0b10000011, 0b00000000,
+0b00000000, 0b01111111, 0b10000110, 0b00000000,
+0b00000000, 0b00111111, 0b10001100, 0b00000000,
+0b00000000, 0b00011111, 0b10111000, 0b00000000,
+0b00000001, 0b10001111, 0b11110001, 0b10000000,
+0b00000011, 0b10000000, 0b00000001, 0b11000000,
+0b00000111, 0b00000000, 0b00000000, 0b11100000,
+0b00000110, 0b00000000, 0b00000000, 0b01100000,
+0b00000000, 0b00000001, 0b10000000, 0b00000000,
+0b00000000, 0b00000001, 0b10000000, 0b00000000,
+0b00000000, 0b00000001, 0b10000000, 0b00000000,
+0b00000000, 0b00000001, 0b10000000, 0b00000000,
+0b00000000, 0b00000000, 0b00000000, 0b00000000 
+};
+
+static const unsigned char epd_bitmap_power_8bit [] PROGMEM = {
+0b00000000, 0b00000001, 0b10000000, 0b00000000,
+0b00000000, 0b00000011, 0b11000000, 0b00000000,
+0b00000000, 0b00000011, 0b11000000, 0b00000000,
+0b00000000, 0b00000011, 0b11000000, 0b00000000,
+0b00000000, 0b00000011, 0b11000000, 0b00000000,
+0b00000000, 0b00000011, 0b11000000, 0b00000000,
+0b00000001, 0b11000011, 0b11000011, 0b10000000,
+0b00000011, 0b11000011, 0b11000011, 0b11000000,
+0b00000111, 0b11000011, 0b11000011, 0b11100000,
+0b00001111, 0b11000011, 0b11000011, 0b11110000,
+0b00001111, 0b10000011, 0b11000001, 0b11110000,
+0b00011111, 0b00000011, 0b11000000, 0b11111000,
+0b00011110, 0b00000011, 0b11000000, 0b01111000,
+0b00111110, 0b00000001, 0b10000000, 0b01111100,
+0b00111100, 0b00000000, 0b00000000, 0b00111100, 
+0b00111100, 0b00000000, 0b00000000, 0b00111100,
+0b00111100, 0b00000000, 0b00000000, 0b00111100,
+0b00111100, 0b00000000, 0b00000000, 0b00111100,
+0b00111100, 0b00000000, 0b00000000, 0b00111100,
+0b00111100, 0b00000000, 0b00000000, 0b00111100,
+0b00111100, 0b00000000, 0b00000000, 0b00111100,
+0b00111110, 0b00000000, 0b00000000, 0b01111100,
+0b00011110, 0b00000000, 0b00000000, 0b01111000,
+0b00011111, 0b00000000, 0b00000000, 0b11111000,
+0b00011111, 0b00000000, 0b00000000, 0b11111000,
+0b00001111, 0b11000000, 0b00000011, 0b11110000,
+0b00000111, 0b11100000, 0b00000111, 0b11100000,
+0b00000011, 0b11111000, 0b00011111, 0b11000000,
+0b00000001, 0b11111111, 0b11111111, 0b10000000,
+0b00000000, 0b11111111, 0b11111111, 0b00000000,
+0b00000000, 0b00111111, 0b11111100, 0b00000000,
+0b00000000, 0b00000111, 0b11100000, 0b00000000
+};
+
 #define BATTERY_WIDTH 16
 #define BATTERY_HEIGHT 8
 
-static const unsigned char PROGMEM battery[] = { 
+static const unsigned char PROGMEM battery [] = { 
 0b11111111, 0b11111100,  
 0b10000000, 0b00000111,  
 0b10000000, 0b00000001,  
@@ -282,6 +348,7 @@ bool deltaVisible = false;
 // Contrast modes
 uint8_t contrastLevels[4] = {0, 42, 85, 127}; // approx 0%, 33%, 66%, 100%
 int currentContrast = 3; // start at 100%
+int brightnessSettingBarStepSize = 45 / 3;
 
 // Page system
 const int NUM_PAGES = 4;
@@ -378,7 +445,6 @@ void setup() {
   // internally, this will display the splashscreen.
 
   display.begin(0x3C, true); // Address 0x3D default
-  //display.setContrast (0); // dim display 
  
   display.display();
   delay(100);
@@ -452,7 +518,8 @@ void settingsAction(bool isLeft) {
     display.setContrast(contrastLevels[currentContrast]);
     Serial.print("Contrast set to ");
     Serial.println(contrastLevels[currentContrast]);
-    saveState();
+    Serial.println(currentContrast);
+    // saveState();
   } else {
     // Display a blank image on the display
     display.clearDisplay();
@@ -820,16 +887,17 @@ void renderScreen() {
   else {
     // Settings page
     // Left: contrast icon
-    display.drawRect(20, 10, 40, 40, SH110X_WHITE);
-    display.setCursor(28, 25);
-    display.setTextSize(2);
-    display.print("C");
+    display.drawRect(5, 5, 45, 45, SH110X_WHITE);
+    display.drawRect(49, 5, 7, 45, SH110X_WHITE);
+    int barHeight = min(brightnessSettingBarStepSize * currentContrast, 45);
+    if (currentContrast != 0) {
+      display.fillRect(50, 50 - barHeight, 5, barHeight, SH110X_WHITE);
+    }
+    display.drawBitmap(11, 11, epd_bitmap_brightness_8bit, SETTINGS_ICON_WIDTH, SETTINGS_ICON_HEIGHT, SH110X_WHITE);
 
     // Right: power icon
-    display.drawRect(80, 10, 40, 40, SH110X_WHITE);
-    display.setCursor(92, 25);
-    display.setTextSize(2);
-    display.print("P");
+    display.drawRect(75, 5, 45, 45, SH110X_WHITE);
+    display.drawBitmap(81, 11, epd_bitmap_power_8bit, SETTINGS_ICON_WIDTH, SETTINGS_ICON_HEIGHT, SH110X_WHITE);
   }
 
   // Page indicator
