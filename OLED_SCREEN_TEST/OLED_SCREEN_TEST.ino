@@ -432,7 +432,7 @@ void loadState() {
 void setup() {
   Serial.begin(115200);
 
-  set_sys_clock_khz(200000, true); // Set System clock to 96000 kHz for debugging but 18000 kHz for release.
+  set_sys_clock_khz(200000, true); // Set System clock to 200000 kHz for debugging but 18000 kHz for release.
 
   Wire.setSDA(20);
   Wire.setSCL(21);
@@ -474,7 +474,7 @@ void setup() {
   renderScreen();
 }
 
-void mutateNumber(bool isPositive, int step, int *counterPtr, bool allowNegative) {
+void mutateNumber(bool isPositive, int step, int *counterPtr, bool allowNegative, bool countsForDeltaChange) {
   int before = counterPtr[currentPage];
 
   // Apply step
@@ -617,19 +617,19 @@ bool handleNonMenuButton(int pin, bool &lastState, unsigned long &pressStart,
             // On +x/+y page
             switch (selectionState) {
               case SELECT_X:
-                mutateNumber(isPositive, 1, countersX, true);
+                mutateNumber(isPositive, 1, countersX, true, true);
                 break;
               case SELECT_Y:
-                mutateNumber(isPositive, 1, countersY, true);
+                mutateNumber(isPositive, 1, countersY, true, true);
                 break;
               case SELECT_XY:
-                mutateNumber(isPositive, 1, countersX, true);
-                mutateNumber(isPositive, 1, countersY, true);
+                mutateNumber(isPositive, 1, countersX, true, false);
+                mutateNumber(isPositive, 1, countersY, true, true);
               default:
                 break;
             }
           } else {
-            mutateNumber(isPositive, 1, counters, false);
+            mutateNumber(isPositive, 1, counters, false, true);
           }
           result = true;
         }
@@ -644,19 +644,19 @@ bool handleNonMenuButton(int pin, bool &lastState, unsigned long &pressStart,
             // On +x/+y page
             switch (selectionState) {
               case SELECT_X:
-                mutateNumber(isPositive, 10, countersX, true);
+                mutateNumber(isPositive, 10, countersX, true, true);
                 break;
               case SELECT_Y:
-                mutateNumber(isPositive, 10, countersY, true);
+                mutateNumber(isPositive, 10, countersY, true, true);
                 break;
               case SELECT_XY:
-                mutateNumber(isPositive, 10, countersX, true);
-                mutateNumber(isPositive, 10, countersY, true);
+                mutateNumber(isPositive, 10, countersX, true, false);
+                mutateNumber(isPositive, 10, countersY, true, true);
               default:
                 break;
             }
           } else {
-            mutateNumber(isPositive, 10, counters, false);
+            mutateNumber(isPositive, 10, counters, false, true);
           }
           lastRepeat = now;
 
@@ -823,7 +823,7 @@ void renderScreen() {
   display.clearDisplay();
 
   if (currentPage < NUM_PAGES - 1) {
-    // Big number
+    // Big number default size
     display.setTextSize(5);
     display.setTextColor(SH110X_WHITE);
     display.setCursor(0, 0);
@@ -831,7 +831,12 @@ void renderScreen() {
     int16_t x1, y1;
     uint16_t w, h;
     if (currentPage == NUM_PAGES - 2) {
-      display.setTextSize(3);
+      // +X/+Y counter
+      if (countersX[currentPage] < 10 && countersY[currentPage] < 10) {
+        display.setTextSize(4);
+      } else {
+        display.setTextSize(3);
+      }
       display.print(formatAsCounter(countersX[currentPage], countersY[currentPage]));
       // Underline logic
       if (selectionMode) {
@@ -854,6 +859,7 @@ void renderScreen() {
       }
       display.setTextSize(5);
     } else {
+      // Single counter + icon
       String textToDraw = String(counters[currentPage]);
       display.getTextBounds(textToDraw, 0, 0, &x1, &y1, &w, &h);
       // Draw icon on left
