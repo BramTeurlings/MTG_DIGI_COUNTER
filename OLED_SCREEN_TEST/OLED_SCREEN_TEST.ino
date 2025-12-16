@@ -20,11 +20,16 @@
 #include <Adafruit_SH110X.h>
 #include <LittleFS.h>
 #include <ArduinoJson.h>
+#include <stdlib.h>
+#include "src/pico_rtc/pico_rosc.h"
+#include "src/pico_rtc/pico_sleep.h"
 
 #define SCREEN_WIDTH 64   // OLED display width, in pixels
 #define SCREEN_HEIGHT 128 // OLED display height, in pixels
 #define OLED_RESET -1     // can set an oled reset pin if desired
 Adafruit_SH1107 display = Adafruit_SH1107(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET, 1000000, 100000);
+
+#define WAKEUP_PIN 0 // Temporary wakeup pin until we make every pin count as interrupt 
 
 #define ICON_HEIGHT   24
 #define ICON_WIDTH    24
@@ -427,13 +432,15 @@ void loadState() {
 void setup() {
   Serial.begin(115200);
 
+  set_sys_clock_khz(200000, true); // Set System clock to 96000 kHz for debugging but 18000 kHz for release.
+
   Wire.setSDA(20);
   Wire.setSCL(21);
   
   pinMode(BUTTON_PIN1, INPUT_PULLDOWN); // button to positive
   pinMode(BUTTON_PIN2, INPUT_PULLDOWN); // button to positive
   pinMode(BUTTON_PIN3, INPUT_PULLDOWN); // button to positive
-
+  pinMode(WAKEUP_PIN, INPUT_PULLDOWN);  // button to positive
  
   delay(250); // wait for the OLED to power up
 
@@ -776,6 +783,12 @@ void loop() {
 
   if (doRender) {
     renderScreen();
+  }
+
+  // Go into sleep mode if none of the three buttons are pressed down.
+  if (!digitalRead(BUTTON_PIN1) && !digitalRead(BUTTON_PIN2) && !digitalRead(BUTTON_PIN3) && digitalRead(WAKEUP_PIN) && deltaVisible == false) {
+    sleep_run_from_xosc();
+    sleep_goto_dormant_until_pin(WAKEUP_PIN, 1, 0);
   }
 
   delay(10); // debounce delay
