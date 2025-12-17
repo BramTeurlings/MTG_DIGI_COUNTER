@@ -29,8 +29,6 @@
 #define OLED_RESET -1     // can set an oled reset pin if desired
 Adafruit_SH1107 display = Adafruit_SH1107(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET, 1000000, 100000);
 
-#define WAKEUP_PIN 0 // Temporary wakeup pin until we make every pin count as interrupt 
-
 #define ICON_HEIGHT   24
 #define ICON_WIDTH    24
 
@@ -310,6 +308,10 @@ constexpr int NUM_ICONS = sizeof(icons) / sizeof(icons[0]);
 #define BUTTON_PIN2 2  // GP2
 #define BUTTON_PIN3 3  // GP3
 
+#define WAKEUP_PIN 0          // Temporary wakeup pin until we make every pin count as interrupt
+#define BATTERY_PIN 26         // Pin to read out current battery level
+#define BATTERY_ENABLE_PIN 10 // Pin to enable reading the current battery level when pulled high
+
 // Selection modes
 static bool button3Held = false; // Todo: Refactor this because it's stupid and only used for the selectionmode
 bool button3OtherPressedDuringHold = false;
@@ -349,6 +351,9 @@ int netChange = 0;
 unsigned long lastActionTime = 0;
 const unsigned long changeDisplayDuration = 2000;
 bool deltaVisible = false;
+
+// Battery level tracking, number range is 0-1023
+int batteryLevel = 0;
 
 // Contrast modes
 uint8_t contrastLevels[4] = {0, 42, 85, 127}; // approx 0%, 33%, 66%, 100%
@@ -441,6 +446,8 @@ void setup() {
   pinMode(BUTTON_PIN2, INPUT_PULLDOWN); // button to positive
   pinMode(BUTTON_PIN3, INPUT_PULLDOWN); // button to positive
   pinMode(WAKEUP_PIN, INPUT_PULLDOWN);  // button to positive
+  pinMode(BATTERY_PIN, INPUT);          // read the value
+  pinMode(BATTERY_ENABLE_PIN, OUTPUT);  // write to this pin to turn on transistor
  
   delay(250); // wait for the OLED to power up
 
@@ -525,9 +532,6 @@ void settingsAction(bool isLeft) {
     // Cycle contrast
     currentContrast = (currentContrast + 1) % 4;
     display.setContrast(contrastLevels[currentContrast]);
-    Serial.print("Contrast set to ");
-    Serial.println(contrastLevels[currentContrast]);
-    Serial.println(currentContrast);
     // saveState();
   } else {
     // Display a blank image on the display
@@ -783,6 +787,12 @@ void loop() {
     doRender = true;
   }
 
+  // Handle battery readout
+  digitalWrite(BATTERY_ENABLE_PIN, HIGH);
+  // Read the  battery pin value
+  batteryLevel = analogRead(BATTERY_PIN);
+  digitalWrite(BATTERY_ENABLE_PIN, LOW);
+
   if (doRender) {
     renderScreen();
   }
@@ -937,9 +947,10 @@ void renderScreen() {
   // Battery indicator
   int batteryX = 108;
   int batteryY = 54;
+  int convertedBatteryLevel = min(round(batteryLevel / 73), 14); // There are 14 pixels available, divide a maximum of 1023 by 14 to get the range per pixel.
   display.drawBitmap(batteryX, batteryY, battery, BATTERY_WIDTH, BATTERY_HEIGHT, SH110X_WHITE);
   // Todo: Make the width of the box variable based on battery level
-  display.fillRect(batteryX + 1, batteryY + 1, 14, 6, SH110X_WHITE);
+  display.fillRect(batteryX + 1, batteryY + 1, convertedBatteryLevel, 6, SH110X_WHITE);
 
   display.display();
 }
