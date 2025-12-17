@@ -495,8 +495,10 @@ void mutateNumber(bool isPositive, int step, int *counterPtr, bool allowNegative
   }
 
   // Actual change is the difference between before and after
-  int actualDelta = counterPtr[currentPage] - before;
-  netChange += actualDelta;
+  if (countsForDeltaChange) {
+    int actualDelta = counterPtr[currentPage] - before;
+    netChange += actualDelta;
+  }
 
   // Keep time since last mutation.
   lastActionTime = millis();
