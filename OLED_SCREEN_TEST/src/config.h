@@ -6,7 +6,10 @@
 
 // System
 constexpr unsigned long SERIAL_BAUDRATE = 115200;
-constexpr uint32_t SYS_CLOCK_KHZ = 200000; // 200000 kHz for debugging but 18000 kHz for release.
+// System clock. Lower uses less power while awake, but keep it at 48 MHz or more: USB needs clk_sys >= 48 MHz to work
+// reliably, and the display's 1 MHz I2C needs at least 32 MHz. Below that, we must lower the I2C speed in renderer.cpp.
+// 200000 kHz is possible for debugging but that's already an overclock from the default 133000 kHz
+constexpr uint32_t SYS_CLOCK_KHZ = 48000;
 constexpr uint8_t DEBUG_LED_PIN = 17;      // On while awake
 
 // Display
