@@ -101,6 +101,27 @@ static inline void sleep_goto_dormant_until_level_high(uint gpio_pin) {
     sleep_goto_dormant_until_pin(gpio_pin, false, true);
 }
 
+/*! \brief Send system to sleep until any of the given GPIOs is high
+ *  \ingroup hardware_sleep
+ *
+ * One of the sleep_run_* functions must be called prior to this call.
+ * Level triggered, so a pin that is already high wakes the system straight away
+ * instead of the wake-up being missed.
+ *
+ * \param gpio_mask Bit mask of the pins that can wake the system (bit n = GPIO n)
+ */
+void sleep_goto_dormant_until_any_level_high(uint32_t gpio_mask);
+
+/*! \brief Restore the clocks after waking up from sleep or dormant mode
+ *  \ingroup hardware_sleep
+ *
+ * Restarts the oscillator that sleep_run_from_dormant_source() switched off and brings the
+ * PLLs and all clocks (sys, usb, adc, peri, rtc) back to the SDK defaults. Without this the
+ * ADC and USB stay unclocked, so e.g. analogRead() hangs forever.
+ * Call set_sys_clock_khz() afterwards if you ran at a non-default system clock.
+ */
+void sleep_power_up(void);
+
 #ifdef __cplusplus
 }
 #endif

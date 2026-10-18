@@ -20,6 +20,8 @@
 #include "hardware/sync.h"
 // For scb_hw so we can enable deep sleep
 #include "hardware/structs/scb.h"
+// For runtime_init_clocks, used to restore the clocks after waking up
+#include "pico/runtime_init.h"
 
 // The difference between sleep and dormant is that ALL clocks are stopped in dormant mode,
 // until the source (either xosc or rosc) is started again by an external event.
@@ -147,13 +149,43 @@ void sleep_goto_dormant_until_pin(uint gpio_pin, bool edge, bool high) {
     if (edge && high) event = IO_BANK0_DORMANT_WAKE_INTE0_GPIO0_EDGE_HIGH_BITS;
     if (edge && low) event = IO_BANK0_DORMANT_WAKE_INTE0_GPIO0_EDGE_LOW_BITS;
 
+    // Clear an edge that was latched earlier, otherwise we wake up immediately
+    gpio_acknowledge_irq(gpio_pin, event);
     gpio_set_dormant_irq_enabled(gpio_pin, event, true);
 
     _go_dormant();
     // Execution stops here until woken up
 
     // Clear the irq so we can go back to dormant mode again if we want
+    gpio_set_dormant_irq_enabled(gpio_pin, event, false);
     gpio_acknowledge_irq(gpio_pin, event);
+}
+
+void sleep_goto_dormant_until_any_level_high(uint32_t gpio_mask) {
+    for (uint gpio = 0; gpio < NUM_BANK0_GPIOS; gpio++) {
+        if (gpio_mask & (1u << gpio)) {
+            gpio_set_dormant_irq_enabled(gpio, GPIO_IRQ_LEVEL_HIGH, true);
+        }
+    }
+
+    _go_dormant();
+    // Execution stops here until woken up
+
+    for (uint gpio = 0; gpio < NUM_BANK0_GPIOS; gpio++) {
+        if (gpio_mask & (1u << gpio)) {
+            gpio_set_dormant_irq_enabled(gpio, GPIO_IRQ_LEVEL_HIGH, false);
+        }
+    }
+}
+
+void sleep_power_up(void) {
+    // sleep_run_from_dormant_source() disabled the oscillator we weren't running from
+    if (_dormant_source == DORMANT_SOURCE_XOSC) {
+        rosc_enable();
+    }
+
+    // Restarts the xosc and PLLs and reconfigures every clock, including clk_usb and clk_adc
+    runtime_init_clocks();
 }
 
 #endif /* ARDUINO_ARCH_RP2040 */

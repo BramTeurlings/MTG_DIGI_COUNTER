@@ -14,6 +14,7 @@
 
 
 
+#include <Arduino.h>
 #include <SPI.h>
 #include <Wire.h>
 #include <Adafruit_GFX.h>
@@ -21,8 +22,23 @@
 #include <LittleFS.h>
 #include <ArduinoJson.h>
 #include <stdlib.h>
-#include "src/pico_rtc/pico_rosc.h"
-#include "src/pico_rtc/pico_sleep.h"
+#include <USB.h>
+#include <hardware/sync.h>
+#include "pico_rtc/pico_rosc.h"
+#include "pico_rtc/pico_sleep.h"
+
+void saveState();
+void loadState();
+void mutateNumber(bool isPositive, int step, int *counterPtr, bool allowNegative, bool countsForDeltaChange);
+void switchPage(int direction);
+void settingsAction(bool isLeft);
+bool anyButtonPressed();
+void powerOff();
+bool handleSelectionMode(int pin, bool state, bool lastState);
+bool cycleIcons(bool isPositiveIncrementer, bool lastState, bool state);
+String formatAsCounter(int x, int y);
+void drawSelectionUnderline(int16_t x, int16_t y, int16_t w);
+void renderScreen();
 
 #define SCREEN_WIDTH 64   // OLED display width, in pixels
 #define SCREEN_HEIGHT 128 // OLED display height, in pixels
@@ -308,12 +324,14 @@ constexpr int NUM_ICONS = sizeof(icons) / sizeof(icons[0]);
 #define BUTTON_PIN2 2  // GP2
 #define BUTTON_PIN3 3  // GP3
 
-#define WAKEUP_PIN 0          // Temporary wakeup pin until we make every pin count as interrupt
-#define BATTERY_PIN 26         // Pin to read out current battery level
+#define BATTERY_PIN 26        // Pin to read out current battery level
 #define BATTERY_ENABLE_PIN 10 // Pin to enable reading the current battery level when pulled high
 
+#define SYS_CLOCK_KHZ 200000  // System clock, 200000 kHz for debugging but 18000 kHz for release.
+
 // Selection modes
-static bool button3Held = false; // Todo: Refactor this because it's stupid and only used for the selectionmode
+// Set when button 1 or 2 is pressed while button 3 is held, so releasing button 3 quickly afterwards
+// isn't treated as a tap (which would immediately leave the selection mode that was just entered).
 bool button3OtherPressedDuringHold = false;
 unsigned long button3PressTime = 0;
 const unsigned long BUTTON3_TAP_MS = 500; // ms threshold to distinguish tap vs hold
@@ -330,8 +348,13 @@ bool lastButtonState1 = LOW; // default LOW if using pull-down
 bool lastButtonState2 = LOW; // default LOW if using pull-down
 bool lastButtonState3 = LOW; // default LOW if using pull-down
 
-// Holds the timestamp for the current press down action
-unsigned long pressStart = 0;
+// Holds the timestamp for the current press down action, per button
+unsigned long pressStart1 = 0;
+unsigned long pressStart2 = 0;
+unsigned long pressStart3 = 0;
+
+// Set while buttons 1 and 2 are pressed together, until both are released. Neither of them counts then.
+bool upDownChord = false;
 
 // Hold button increment/decrement settings
 const unsigned long holdThreshold = 1000; // 1s before starting acceleration
@@ -342,9 +365,13 @@ const unsigned long minInterval = 200;    // fastest speed
 // Hold power off button settings
 const unsigned long holdPowerButtonThreshold = 3000; // 3s before the system shuts off when holding down the third button.
 
-// For tracking repeat timing
-unsigned long lastRepeatTime = 0;
-unsigned long currentInterval = initialRepeat;
+// For tracking repeat timing, per button
+unsigned long lastRepeatTime1 = 0;
+unsigned long lastRepeatTime2 = 0;
+unsigned long lastRepeatTime3 = 0;
+unsigned long currentInterval1 = initialRepeat;
+unsigned long currentInterval2 = initialRepeat;
+unsigned long currentInterval3 = initialRepeat;
 
 // Net change tracking
 int netChange = 0;
@@ -437,7 +464,7 @@ void loadState() {
 void setup() {
   Serial.begin(115200);
 
-  set_sys_clock_khz(200000, true); // Set System clock to 200000 kHz for debugging but 18000 kHz for release.
+  set_sys_clock_khz(SYS_CLOCK_KHZ, true);
 
   Wire.setSDA(20);
   Wire.setSCL(21);
@@ -445,10 +472,11 @@ void setup() {
   pinMode(BUTTON_PIN1, INPUT_PULLDOWN); // button to positive
   pinMode(BUTTON_PIN2, INPUT_PULLDOWN); // button to positive
   pinMode(BUTTON_PIN3, INPUT_PULLDOWN); // button to positive
-  pinMode(WAKEUP_PIN, INPUT_PULLDOWN);  // button to positive
   pinMode(BATTERY_PIN, INPUT);          // read the value
   pinMode(BATTERY_ENABLE_PIN, OUTPUT);  // write to this pin to turn on transistor
- 
+  pinMode(17, OUTPUT);  // debug LED pin
+  digitalWrite(17, 1);
+
   delay(250); // wait for the OLED to power up
 
   LittleFS.begin();
@@ -511,7 +539,7 @@ void mutateNumber(bool isPositive, int step, int *counterPtr, bool allowNegative
   lastActionTime = millis();
   deltaVisible = true;
 
-  // saveState();  // write to flash every change
+  // Saved once the delta disappears instead of on every change, see loop()
   delay(10); // debounce delay
 }
 
@@ -524,7 +552,7 @@ void switchPage(int direction) {
   deltaVisible = false;
   lastActionTime = millis();
 
-  // saveState(); Todo: Uncomment all saveState() calls later
+  // saveState(); // All saveState() calls are commented out while debugging to spare the flash
 }
 
 void settingsAction(bool isLeft) {
@@ -534,45 +562,85 @@ void settingsAction(bool isLeft) {
     display.setContrast(contrastLevels[currentContrast]);
     // saveState();
   } else {
-    // Display a blank image on the display
-    display.clearDisplay();
-    display.display();
-    // Todo: put MCU into sleep here if desired
-    Serial.println("Todo: Powering off...");
+    powerOff();
   }
 }
 
-// Call this inside handleButton when button 3 is involved
-bool handleSelectionMode(int pin, bool state, bool lastState) {
+bool anyButtonPressed() {
+  return digitalRead(BUTTON_PIN1) || digitalRead(BUTTON_PIN2) || digitalRead(BUTTON_PIN3);
+}
+
+// Turns the display off and puts the MCU in dormant mode until button 1, 2 or 3 is pressed.
+// The press that wakes the device up is swallowed, so it doesn't also change anything.
+void powerOff() {
+  // saveState();
+
+  digitalWrite(17, 0);
+  Serial.println("Powering off...");
+  display.clearDisplay();
+  display.display();
+  display.oled_command(SH110X_DISPLAYOFF);
+
+  // Wake-up is level triggered, so wait until the button that powered us off is let go
+  while (anyButtonPressed()) {
+    delay(10);
+  }
+  delay(50); // debounce the release
+
+  Serial.flush();
+  USB.disconnect(); // Detach cleanly, USB is unclocked while dormant
+
+  // No interrupts while the clocks are switched, e.g. the USB task would touch unclocked hardware
+  uint32_t interrupts = save_and_disable_interrupts();
+  sleep_run_from_xosc();
+  sleep_goto_dormant_until_any_level_high((1u << BUTTON_PIN1) | (1u << BUTTON_PIN2) | (1u << BUTTON_PIN3));
+  // Execution stops here until a button is pressed
+  sleep_power_up();
+  set_sys_clock_khz(SYS_CLOCK_KHZ, true);
+  restore_interrupts(interrupts);
+
+  USB.connect();
+  display.oled_command(SH110X_DISPLAYON);
+
+  // Swallow the wake-up press
+  while (anyButtonPressed()) {
+    delay(10);
+  }
+  delay(50); // debounce the release
+
+  lastButtonState1 = LOW;
+  lastButtonState2 = LOW;
+  lastButtonState3 = LOW;
+  upDownChord = false;
+  netChange = 0;
+  deltaVisible = false;
+  Serial.println("Woke up.");
+  digitalWrite(17, 1);
+}
+
+// Handles button 3 press/release/tap detection, only call this for button 3
+bool handleSelectionMode(bool state, bool lastState) {
   unsigned long now = millis();
 
-  // Handle button 3 press/release/tap detection
-  if (pin == BUTTON_PIN3) {
-    // pressed down
-    if (!lastState && state) {
-      button3Held = true;
-      button3PressTime = now;
-      button3OtherPressedDuringHold = false; // reset for this press cycle -> Todo: pretty sure this var is bullshit and can be deleted
-      return false;
-    } else if (lastState && !state) { // released
-      unsigned long held = now - button3PressTime;
-      button3Held = false;
+  // pressed down
+  if (!lastState && state) {
+    button3PressTime = now;
+    button3OtherPressedDuringHold = false; // reset for this press cycle
+    return false;
+  } else if (lastState && !state) { // released
+    unsigned long held = now - button3PressTime;
 
-      // If no other button was pressed while button3 was held and duration < TAP_MS => a "tap"
-      if (!button3OtherPressedDuringHold && held < BUTTON3_TAP_MS) {
-        // Treat as single-tap: if in selection mode exit it, otherwise do the normal page switch
-        if (selectionMode) {
-          selectionMode = false;
-          return true;
-        } else {
-          switchPage(1);
-          lastState = state;
-          return true;
-        }
+    // If no other button was pressed while button3 was held and duration < TAP_MS => a "tap"
+    if (!button3OtherPressedDuringHold && held < BUTTON3_TAP_MS) {
+      // Treat as single-tap: if in selection mode exit it, otherwise do the normal page switch
+      if (selectionMode) {
+        selectionMode = false;
+      } else {
+        switchPage(1);
       }
-      // else: this was a hold (or a chord) — do not toggle selectionMode here.
-      return false;
+      return true;
     }
+    // else: this was a hold (or a chord) — do not toggle selectionMode here.
   }
   return false;
 }
@@ -610,7 +678,7 @@ bool handleNonMenuButton(int pin, bool &lastState, unsigned long &pressStart,
       currentInterval = initialRepeat;
     }
 
-    if (pin != 3 && lastState == HIGH && state == LOW) {
+    if (lastState == HIGH && state == LOW) {
       // Button released
       if (currentPage == NUM_PAGES - 1) {
         // On settings page → short press activates setting
@@ -643,7 +711,7 @@ bool handleNonMenuButton(int pin, bool &lastState, unsigned long &pressStart,
     }
 
     // Long press handling
-    if (pin != 3 && currentPage < NUM_PAGES - 1 && state == HIGH) {
+    if (currentPage < NUM_PAGES - 1 && state == HIGH) {
       if (now - pressStart >= holdThreshold) {
         if (now - lastRepeat >= currentInterval) {
           if (currentPage == NUM_PAGES - 2) {
@@ -679,7 +747,7 @@ bool handleNonMenuButton(int pin, bool &lastState, unsigned long &pressStart,
   return result;
 }
 
-// Todo: Handle all three buttons (pins) in one loop so we can do something if all three are pressed. Otherwise it leads to strange behavior if both 1 & 2 are pressed at once.
+// Called for every button on every loop, button 3 first so lastButtonState3 tells buttons 1 & 2 whether it's held
 bool handleButton(int pin, bool &lastState, unsigned long &pressStart,
                   unsigned long &lastRepeat, unsigned long &currentInterval,
                   bool isPositive) {
@@ -687,35 +755,35 @@ bool handleButton(int pin, bool &lastState, unsigned long &pressStart,
   bool state = digitalRead(pin);
   unsigned long now = millis();
 
-  // Todo: This invocation has a check that is also internally done, please clean this up (pin 3 check)
-  // Handle entering/exiting selection mode
-  if (pin == 3) {
-    if (handleSelectionMode(pin, state, lastState)) {
+  if (pin == BUTTON_PIN3) {
+    // Handle entering/exiting selection mode
+    if (handleSelectionMode(state, lastState)) {
       result = true;
     }
+
+    // Holding button 3 shuts down the system
+    if (state && now - button3PressTime > holdPowerButtonThreshold) {
+      powerOff();
+      return true;
+    }
+
+    lastState = state;
+    return result;
   }
 
   // If button 3 is held and button 1 or 2 pressed → enter selection mode
-  if (button3Held) {
-    if (pin == 1 && lastState == LOW && state == HIGH) {
-      button3OtherPressedDuringHold = true;
-      selectionMode = true;
-      selectedItem = 0; // left
-      return true;
-    }
-    if (pin == 2 && lastState == LOW && state == HIGH) {
-      button3OtherPressedDuringHold = true;
-      selectionMode = true;
-      selectedItem = 1; // right
-      return true;
-    }
-    if (now - button3PressTime > holdPowerButtonThreshold) {
-      // Todo: This keeps triggering until you let go of the button, that's fine if the CPU kills itself here though.
-      // Shut down the system
-      display.clearDisplay();
-      display.display();
-      return false;
-    }
+  if (lastButtonState3 == HIGH && lastState == LOW && state == HIGH) {
+    button3OtherPressedDuringHold = true;
+    selectionMode = true;
+    selectedItem = (pin == BUTTON_PIN1) ? 0 : 1; // left : right
+    lastState = state;
+    return true;
+  }
+
+  // Buttons 1 & 2 pressed together don't count
+  if (upDownChord) {
+    lastState = state;
+    return false;
   }
 
   // If in selection mode, up/down modifies either icon or number
@@ -773,18 +841,27 @@ bool handleButton(int pin, bool &lastState, unsigned long &pressStart,
 
 void loop() {
   bool doRender = false;
-  // Handle buttons until one of them calls for the UI to be updated (i.e. returns true)
-  if (!(doRender = handleButton(BUTTON_PIN3, lastButtonState3, pressStart, lastRepeatTime, currentInterval, true))) {
-    if (!(doRender = handleButton(BUTTON_PIN1, lastButtonState1, pressStart, lastRepeatTime, currentInterval, true))) {
-      doRender = handleButton(BUTTON_PIN2, lastButtonState2, pressStart, lastRepeatTime, currentInterval, false);
-    }
+
+  // Pressing 1 & 2 together cancels both until they are both released
+  bool pressed1 = digitalRead(BUTTON_PIN1);
+  bool pressed2 = digitalRead(BUTTON_PIN2);
+  if (pressed1 && pressed2) {
+    upDownChord = true;
+  } else if (!pressed1 && !pressed2) {
+    upDownChord = false;
   }
+
+  // Handle every button on every loop, each with its own timing state. Button 3 goes first, see handleButton().
+  doRender |= handleButton(BUTTON_PIN3, lastButtonState3, pressStart3, lastRepeatTime3, currentInterval3, true);
+  doRender |= handleButton(BUTTON_PIN1, lastButtonState1, pressStart1, lastRepeatTime1, currentInterval1, true);
+  doRender |= handleButton(BUTTON_PIN2, lastButtonState2, pressStart2, lastRepeatTime2, currentInterval2, false);
 
   // Handle delta timeout
   if (deltaVisible && millis() - lastActionTime > changeDisplayDuration) {
     netChange = 0;
     deltaVisible = false;
     doRender = true;
+    // saveState(); // Save once the changes have settled
   }
 
   // Handle battery readout
@@ -795,12 +872,6 @@ void loop() {
 
   if (doRender) {
     renderScreen();
-  }
-
-  // Go into sleep mode if none of the three buttons are pressed down.
-  if (!digitalRead(BUTTON_PIN1) && !digitalRead(BUTTON_PIN2) && !digitalRead(BUTTON_PIN3) && digitalRead(WAKEUP_PIN) && deltaVisible == false) {
-    sleep_run_from_xosc();
-    sleep_goto_dormant_until_pin(WAKEUP_PIN, 1, 0);
   }
 
   delay(10); // debounce delay
@@ -949,7 +1020,6 @@ void renderScreen() {
   int batteryY = 54;
   int convertedBatteryLevel = min(round(batteryLevel / 73), 14); // There are 14 pixels available, divide a maximum of 1023 by 14 to get the range per pixel.
   display.drawBitmap(batteryX, batteryY, battery, BATTERY_WIDTH, BATTERY_HEIGHT, SH110X_WHITE);
-  // Todo: Make the width of the box variable based on battery level
   display.fillRect(batteryX + 1, batteryY + 1, convertedBatteryLevel, 6, SH110X_WHITE);
 
   display.display();
