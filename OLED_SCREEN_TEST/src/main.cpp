@@ -34,6 +34,7 @@ void switchPage(int direction);
 void settingsAction(bool isLeft);
 bool anyButtonPressed();
 void powerOff();
+void goDormantUntilButtonPress();
 bool handleSelectionMode(int pin, bool state, bool lastState);
 bool cycleIcons(bool isPositiveIncrementer, bool lastState, bool state);
 String formatAsCounter(int x, int y);
@@ -353,8 +354,10 @@ unsigned long pressStart1 = 0;
 unsigned long pressStart2 = 0;
 unsigned long pressStart3 = 0;
 
-// Set while buttons 1 and 2 are pressed together, until both are released. Neither of them counts then.
-bool upDownChord = false;
+// Set when a press of button 1 or 2 was used for something else (choosing what selection mode changes, or 1 & 2
+// pressed together), so that press doesn't change any value. Cleared when the button is released.
+bool ignoreUntilRelease1 = false;
+bool ignoreUntilRelease2 = false;
 
 // Hold button increment/decrement settings
 const unsigned long holdThreshold = 1000; // 1s before starting acceleration
@@ -364,6 +367,10 @@ const unsigned long minInterval = 200;    // fastest speed
 
 // Hold power off button settings
 const unsigned long holdPowerButtonThreshold = 3000; // 3s before the system shuts off when holding down the third button.
+
+// Idle settings
+const unsigned long idleDormantThreshold = 30000; // 30s without any button input before the CPU goes dormant, the display stays on.
+unsigned long lastInputTime = 0;
 
 // For tracking repeat timing, per button
 unsigned long lastRepeatTime1 = 0;
@@ -571,17 +578,24 @@ bool anyButtonPressed() {
 }
 
 // Turns the display off and puts the MCU in dormant mode until button 1, 2 or 3 is pressed.
-// The press that wakes the device up is swallowed, so it doesn't also change anything.
 void powerOff() {
   // saveState();
 
-  digitalWrite(17, 0);
   Serial.println("Powering off...");
   display.clearDisplay();
   display.display();
   display.oled_command(SH110X_DISPLAYOFF);
 
-  // Wake-up is level triggered, so wait until the button that powered us off is let go
+  goDormantUntilButtonPress();
+}
+
+// Puts the MCU in dormant mode until button 1, 2 or 3 is pressed, and turns the display (back) on after waking up.
+// The display keeps showing its last image while dormant unless it was turned off before.
+// The press that wakes the device up is swallowed, so it doesn't also change anything.
+void goDormantUntilButtonPress() {
+  digitalWrite(17, 0);
+
+  // Wake-up is level triggered, so wait until the button that sent us to sleep is let go
   while (anyButtonPressed()) {
     delay(10);
   }
@@ -611,9 +625,11 @@ void powerOff() {
   lastButtonState1 = LOW;
   lastButtonState2 = LOW;
   lastButtonState3 = LOW;
-  upDownChord = false;
+  ignoreUntilRelease1 = false;
+  ignoreUntilRelease2 = false;
   netChange = 0;
   deltaVisible = false;
+  lastInputTime = millis();
   Serial.println("Woke up.");
   digitalWrite(17, 1);
 }
@@ -750,7 +766,7 @@ bool handleNonMenuButton(int pin, bool &lastState, unsigned long &pressStart,
 // Called for every button on every loop, button 3 first so lastButtonState3 tells buttons 1 & 2 whether it's held
 bool handleButton(int pin, bool &lastState, unsigned long &pressStart,
                   unsigned long &lastRepeat, unsigned long &currentInterval,
-                  bool isPositive) {
+                  bool &ignoreUntilRelease, bool isPositive) {
   bool result = false;
   bool state = digitalRead(pin);
   unsigned long now = millis();
@@ -771,17 +787,26 @@ bool handleButton(int pin, bool &lastState, unsigned long &pressStart,
     return result;
   }
 
-  // If button 3 is held and button 1 or 2 pressed → enter selection mode
-  if (lastButtonState3 == HIGH && lastState == LOW && state == HIGH) {
-    button3OtherPressedDuringHold = true;
-    selectionMode = true;
-    selectedItem = (pin == BUTTON_PIN1) ? 0 : 1; // left : right
+  // While button 3 is held, buttons 1 & 2 only enter selection mode and pick the left or right item, values don't change
+  if (lastButtonState3 == HIGH) {
+    if (lastState == LOW && state == HIGH) {
+      button3OtherPressedDuringHold = true;
+      selectionMode = true;
+      selectedItem = (pin == BUTTON_PIN1) ? 0 : 1; // left : right
+      result = true;
+    }
+    if (state == HIGH) {
+      ignoreUntilRelease = true;
+    }
     lastState = state;
-    return true;
+    return result;
   }
 
-  // Buttons 1 & 2 pressed together don't count
-  if (upDownChord) {
+  // Swallow a press that was used for something else, including its hold and release
+  if (ignoreUntilRelease) {
+    if (state == LOW) {
+      ignoreUntilRelease = false;
+    }
     lastState = state;
     return false;
   }
@@ -842,19 +867,18 @@ bool handleButton(int pin, bool &lastState, unsigned long &pressStart,
 void loop() {
   bool doRender = false;
 
-  // Pressing 1 & 2 together cancels both until they are both released
-  bool pressed1 = digitalRead(BUTTON_PIN1);
-  bool pressed2 = digitalRead(BUTTON_PIN2);
-  if (pressed1 && pressed2) {
-    upDownChord = true;
-  } else if (!pressed1 && !pressed2) {
-    upDownChord = false;
+  // Pressing 1 & 2 together cancels both until each is released
+  if (digitalRead(BUTTON_PIN1) && digitalRead(BUTTON_PIN2)) {
+    ignoreUntilRelease1 = true;
+    ignoreUntilRelease2 = true;
   }
 
   // Handle every button on every loop, each with its own timing state. Button 3 goes first, see handleButton().
-  doRender |= handleButton(BUTTON_PIN3, lastButtonState3, pressStart3, lastRepeatTime3, currentInterval3, true);
-  doRender |= handleButton(BUTTON_PIN1, lastButtonState1, pressStart1, lastRepeatTime1, currentInterval1, true);
-  doRender |= handleButton(BUTTON_PIN2, lastButtonState2, pressStart2, lastRepeatTime2, currentInterval2, false);
+  // Button 3 never needs ignoring, it's not used in chords that change values.
+  bool ignoreUntilRelease3 = false;
+  doRender |= handleButton(BUTTON_PIN3, lastButtonState3, pressStart3, lastRepeatTime3, currentInterval3, ignoreUntilRelease3, true);
+  doRender |= handleButton(BUTTON_PIN1, lastButtonState1, pressStart1, lastRepeatTime1, currentInterval1, ignoreUntilRelease1, true);
+  doRender |= handleButton(BUTTON_PIN2, lastButtonState2, pressStart2, lastRepeatTime2, currentInterval2, ignoreUntilRelease2, false);
 
   // Handle delta timeout
   if (deltaVisible && millis() - lastActionTime > changeDisplayDuration) {
@@ -872,6 +896,14 @@ void loop() {
 
   if (doRender) {
     renderScreen();
+  }
+
+  // Go dormant after a while without input, the display keeps showing the current screen
+  if (anyButtonPressed()) {
+    lastInputTime = millis();
+  } else if (millis() - lastInputTime > idleDormantThreshold) {
+    Serial.println("No input for a while, going dormant...");
+    goDormantUntilButtonPress();
   }
 
   delay(10); // debounce delay
@@ -915,7 +947,7 @@ void renderScreen() {
     uint16_t w, h;
     if (currentPage == NUM_PAGES - 2) {
       // +X/+Y counter
-      if (countersX[currentPage] < 10 && countersY[currentPage] < 10) {
+      if (abs(countersX[currentPage]) < 10 && abs(countersY[currentPage]) < 10) {
         display.setTextSize(4);
       } else {
         display.setTextSize(3);
